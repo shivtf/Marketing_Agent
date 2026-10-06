@@ -28,6 +28,9 @@ export const POST = handle(async (request) => {
     user_metadata: { name },
     app_metadata: { must_change_password: true },
   });
-  if (err) return fail(/already|registered|exists/i.test(err.message) ? 'That email already has an account.' : 'Could not create the user.', /already|registered|exists/i.test(err.message) ? 409 : 500);
+  if (err) {
+    const taken = /already|registered|exists/i.test(err.message);
+    return taken ? fail('That email already has an account.', 409) : fail('Could not create the user.', 500);
+  }
   return Response.json(summarize(data.user), { status: 201 });
 });

@@ -6,7 +6,10 @@ import { CardHead, StatusBadge, SiteCell, ViewCell, DataTable } from './ui';
 import { pad } from '@/core/format';
 
 const StatBox = ({ label, value, color }) => (
-  <div className="stat-box"><div className="muted small"><span className="dot" style={{ background: color }} />{label}</div><div className="big">{value}</div></div>
+  <div className="stat-box">
+    <div className="muted small"><span className="dot" style={{ background: color }} />{label}</div>
+    <div className="big">{value}</div>
+  </div>
 );
 
 export default function BlogsView() {

@@ -55,7 +55,14 @@ export default function UsersView() {
   }
 
   if (status === 'forbidden') {
-    return <main className="page"><div className="page-head"><h1 className="page-title">Users</h1><p className="muted">Only admins can manage users.</p></div></main>;
+    return (
+      <main className="page">
+        <div className="page-head">
+          <h1 className="page-title">Users</h1>
+          <p className="muted">Only admins can manage users.</p>
+        </div>
+      </main>
+    );
   }
 
   const rows = users.map((u) => (
@@ -71,12 +78,20 @@ export default function UsersView() {
 
   return (
     <main className="page">
-      <div className="page-head"><h1 className="page-title">Users</h1><p className="muted">Create employee accounts. New accounts get the default password and must change it at first login.</p></div>
+      <div className="page-head">
+        <h1 className="page-title">Users</h1>
+        <p className="muted">
+          Create employee accounts. New accounts get the default password and must change it at first login.
+        </p>
+      </div>
       <section className="card">
         <CardHead icon="users" title="Add employee" />
         <form className="user-form" noValidate onSubmit={onCreate}>
           <label className="field"><span>Name</span><input name="name" type="text" autoComplete="off" required /></label>
-          <label className="field"><span>Email</span><input name="email" type="email" autoComplete="off" placeholder="employee@company.com" required /></label>
+          <label className="field">
+            <span>Email</span>
+            <input name="email" type="email" autoComplete="off" placeholder="employee@company.com" required />
+          </label>
           <button className={`btn primary auth-submit${busy ? ' loading' : ''}`} type="submit" disabled={busy}>Create user</button>
         </form>
         <div className="auth-msg" role="alert" aria-live="polite" data-tone={msg.tone}>{msg.text}</div>

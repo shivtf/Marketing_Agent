@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon } from './Icon';
-import { ErrorBox } from './ui';
+import { ErrorBox, Skeleton } from './ui';
 import { DataProvider } from './DataProvider';
 import { DrawerProvider } from './DrawerProvider';
 import * as auth from '@/core/auth';
@@ -62,17 +62,20 @@ export function AppShell({ children }) {
   const [attempt, setAttempt] = useState(0);
   const [admin, setAdmin] = useState(false);
 
-  // Guard: signed-out users only see the login page. The backend must also accept the Supabase token.
+  // Guard: signed-out users only see the login page. The session is read locally, so the app renders right away;
+  // /auth/me runs alongside the first data fetches and signs the user out if the backend rejects the token.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const session = await auth.getSession();
-      if (!session) { if (!cancelled) router.replace('/login'); return; }
+      if (cancelled) return;
+      if (!session) { router.replace('/login'); return; }
       // Employees still on the default password can't use the app until they set their own.
-      if (auth.mustChangePassword(session)) { if (!cancelled) router.replace('/change-password'); return; }
+      if (auth.mustChangePassword(session)) { router.replace('/change-password'); return; }
+      setAdmin(auth.isAdmin(session));
+      setState('ready');
       try {
         await getMe();
-        if (!cancelled) { setAdmin(auth.isAdmin(session)); setState('ready'); }
       } catch (err) {
         if (cancelled) return;
         if (err.status === 0) { setState('offline'); return; }
@@ -90,7 +93,9 @@ export function AppShell({ children }) {
       </main>
     );
   }
-  if (state !== 'ready') return null;
+  if (state !== 'ready') {
+    return <main className="page" aria-busy="true" aria-label="Loading"><Skeleton rows={6} /></main>;
+  }
   return (
     <DataProvider>
       <DrawerProvider>

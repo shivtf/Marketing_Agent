@@ -3,21 +3,23 @@
 import { useState } from 'react';
 import { Icon } from './Icon';
 import { OpenRow } from './OpenRow';
-import { useData, useSection, visibleLeads } from './DataProvider';
-import { StatusBadge, SourceCell, Skeleton, ErrorBox, CardHead, ViewCell, DataTable } from './ui';
+import { useLeadsFilter, useSection, useUpdateSection, visibleLeads } from './DataProvider';
+import { StatusBadge, SourceCell, Skeleton, ErrorBox, CardHead, ViewCell, DataTable, StatCards } from './ui';
 import * as api from '@/core/api';
 import { pad, fmtDate, SOURCES } from '@/core/format';
 
 // ---------- Pipeline Control ----------
 function PipelineControl() {
   const { status, data, reload } = useSection('pipelines');
-  const { update } = useData();
+  const update = useUpdateSection();
   const [error, setError] = useState('');
 
   async function act(action, id) {
     const ids = id === 'all' ? data.map((p) => p.id) : [id];
     const prev = new Map(data.map((p) => [p.id, p.status]));
-    const apply = (next) => update('pipelines', (list) => list.map((p) => (ids.includes(p.id) ? { ...p, status: next(p) } : p)));
+    const apply = (next) => update('pipelines', (list) => list.map((p) => (
+      ids.includes(p.id) ? { ...p, status: next(p) } : p
+    )));
     setError('');
     // Optimistic update so the badge and buttons change instantly.
     apply(() => (action === 'start' ? 'running' : 'paused'));
@@ -31,7 +33,7 @@ function PipelineControl() {
 
   const off = status !== 'ready';
   let cards;
-  if (status === 'idle' || status === 'loading') cards = [0, 1].map((i) => <div key={i} className="card"><Skeleton rows={3} /></div>);
+  if (status === 'loading') cards = [0, 1].map((i) => <div key={i} className="card"><Skeleton rows={3} /></div>);
   else if (status === 'error') cards = <div className="card span2"><ErrorBox what="pipelines" onRetry={reload} /></div>;
   else {
     cards = data.map((p) => {
@@ -69,42 +71,34 @@ function PipelineControl() {
 
 // ---------- Leads Overview: stat cards + source breakdown ----------
 const STATS = [
-  { key: 'total', label: 'Total Leads', ic: 'users', tone: '' },
-  { key: 'awaiting', label: 'Awaiting Response', ic: 'clock', tone: 'lavender' },
-  { key: 'responded', label: 'Responded', ic: 'reply', tone: 'green' },
+  { key: 'total', label: 'Total Leads', icon: 'users' },
+  { key: 'awaiting', label: 'Awaiting Response', icon: 'clock', tone: 'lavender' },
+  { key: 'responded', label: 'Responded', icon: 'reply', tone: 'green' },
 ];
 
-function StatCards({ stats }) {
+function LeadStatCards({ stats }) {
   const { status, data, reload } = stats;
-  return (
-    <div className="grid3">
-      {STATS.map(({ key, label, ic, tone }) => (
-        <div key={key} className="card stat">
-          <div className={`tile round ${tone}`}><Icon name={ic} /></div>
-          <div>
-            <div className="muted">{label}</div>
-            {status === 'idle' || status === 'loading' ? <div className="skel" style={{ height: 30, width: 90 }} />
-              : status === 'error' ? <button className="btn" onClick={reload}>Retry</button>
-              : <div className="big">{data[key]}</div>}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+  return <StatCards items={STATS.map((s) => ({ ...s, value: data?.[s.key], status, onRetry: reload }))} />;
 }
 
 function SourceBreakdown({ stats }) {
   const { status, data, reload } = stats;
   const keys = Object.keys(SOURCES);
   let body;
-  if (status === 'idle' || status === 'loading') body = <Skeleton rows={3} />;
+  if (status === 'loading') body = <Skeleton rows={3} />;
   else if (status === 'error') body = <ErrorBox what="lead sources" onRetry={reload} />;
   else {
     const { bySource } = data;
     body = (
       <>
         <div className="stack" role="img" aria-label={keys.map((k) => `${SOURCES[k].label} ${bySource[k]}`).join(', ')}>
-          {keys.map((k) => <span key={k} style={{ flexGrow: bySource[k], background: SOURCES[k].color }} title={`${SOURCES[k].label}: ${bySource[k]}`} />)}
+          {keys.map((k) => (
+            <span
+              key={k}
+              style={{ flexGrow: bySource[k], background: SOURCES[k].color }}
+              title={`${SOURCES[k].label}: ${bySource[k]}`}
+            />
+          ))}
         </div>
         <div className="legend">
           {keys.map((k) => (
@@ -122,14 +116,19 @@ function SourceBreakdown({ stats }) {
 
 // ---------- Leads table ----------
 function Chip({ group, value, children }) {
-  const { filter, setFilter } = useData();
+  const { filter, setFilter } = useLeadsFilter();
   const on = filter[group] === value;
-  return <button className={`chip${on ? ' active' : ''}`} aria-pressed={on} onClick={() => setFilter((f) => ({ ...f, [group]: value }))}>{children}</button>;
+  const select = () => setFilter((f) => ({ ...f, [group]: value }));
+  return (
+    <button className={`chip${on ? ' active' : ''}`} aria-pressed={on} onClick={select}>
+      {children}
+    </button>
+  );
 }
 
 function LeadsTable() {
   const { status, data, reload } = useSection('leads');
-  const { filter } = useData();
+  const { filter } = useLeadsFilter();
   const list = visibleLeads(data, filter);
   return (
     <div className="card">
@@ -148,14 +147,25 @@ function LeadsTable() {
       )}
       <DataTable
         status={status}
-        head={<><th>#</th><th>Name</th><th>Source</th><th>Status</th><th>Date Added</th><th className="view">View</th></>}
+        head={(
+          <>
+            <th>#</th><th>Name</th><th>Source</th><th>Status</th><th>Date Added</th><th className="view">View</th>
+          </>
+        )}
         rows={list.map((l) => (
           <OpenRow key={l.id} kind="lead" id={l.id}>
-            <td className="num">{pad(l.number)}</td><td className="name">{l.name}</td><td><SourceCell source={l.source} /></td>
-            <td><StatusBadge text={l.status} /></td><td className="muted">{fmtDate(l.addedAt, 'date')}</td><ViewCell />
+            <td className="num">{pad(l.number)}</td>
+            <td className="name">{l.name}</td>
+            <td><SourceCell source={l.source} /></td>
+            <td><StatusBadge text={l.status} /></td>
+            <td className="muted">{fmtDate(l.addedAt, 'date')}</td>
+            <ViewCell />
           </OpenRow>
         ))}
-        emptyIcon="users" emptyText={data.length ? 'No leads match these filters' : 'No leads yet'} what="leads" onRetry={reload}
+        emptyIcon="users"
+        emptyText={data.length ? 'No leads match these filters' : 'No leads yet'}
+        what="leads"
+        onRetry={reload}
       />
     </div>
   );
@@ -169,7 +179,7 @@ export default function DashboardView() {
       <section aria-label="Leads overview">
         <div className="section-head"><h2 className="section-title">Leads Overview</h2></div>
         <div className="stack-v">
-          <StatCards stats={stats} />
+          <LeadStatCards stats={stats} />
           <div><SourceBreakdown stats={stats} /></div>
           <div><LeadsTable /></div>
         </div>

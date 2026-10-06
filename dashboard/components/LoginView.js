@@ -54,8 +54,24 @@ export default function LoginView() {
           </label>
           <label className="field"><span>Password</span>
             <span className="pw-wrap">
-              <input ref={passwordRef} id="auth-password" name="password" type={showPw ? 'text' : 'password'} autoComplete="current-password" placeholder="At least 8 characters" required />
-              <button className="pw-toggle" type="button" aria-label={showPw ? 'Hide password' : 'Show password'} aria-pressed={showPw} onClick={() => setShowPw(!showPw)}><Icon name="eye" /></button>
+              <input
+                ref={passwordRef}
+                id="auth-password"
+                name="password"
+                type={showPw ? 'text' : 'password'}
+                autoComplete="current-password"
+                placeholder="At least 8 characters"
+                required
+              />
+              <button
+                className="pw-toggle"
+                type="button"
+                aria-label={showPw ? 'Hide password' : 'Show password'}
+                aria-pressed={showPw}
+                onClick={() => setShowPw(!showPw)}
+              >
+                <Icon name="eye" />
+              </button>
             </span>
           </label>
           <div className="auth-msg" role="alert" aria-live="polite" data-tone={msg.tone}>{msg.text}</div>

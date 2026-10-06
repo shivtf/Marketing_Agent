@@ -10,9 +10,19 @@ function HistoryCard({ section, icon, title, totalLabel, kind, emptyText, head, 
   return (
     <div className="card">
       <CardHead icon={icon} title={title} />
-      {status === 'ready' && <div className="total-block"><div className="muted small">{totalLabel}</div><div className="big">{data.length}</div></div>}
+      {status === 'ready' && (
+        <div className="total-block">
+          <div className="muted small">{totalLabel}</div>
+          <div className="big">{data.length}</div>
+        </div>
+      )}
       <DataTable
-        status={status} head={head} emptyIcon={icon} emptyText={emptyText} what={title.toLowerCase()} onRetry={reload}
+        status={status}
+        head={head}
+        emptyIcon={icon}
+        emptyText={emptyText}
+        what={title.toLowerCase()}
+        onRetry={reload}
         rows={data.map((x) => <OpenRow key={x.id} kind={kind} id={x.id}>{row(x)}</OpenRow>)}
       />
     </div>
