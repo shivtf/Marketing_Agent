@@ -7,7 +7,7 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 |------------------------------------------------------------|--------|----------------------------------------------|
 | `GET /health`                                              | none   | liveness                                     |
 | `GET /auth/me`                                             | Bearer | returns `id`, `email`, `role` of the user    |
-| `GET /leads`, `/leads/stats`, `/leads/positive`, `/leads/{id}` | Bearer | leads, counts, interested replies, one lead |
+| `GET /leads`, `/leads/stats`, `/leads/positive`, `/leads/{id}` | Bearer | leads, counts, positive / review / question leads (latest human reply), one lead |
 | `GET /emails/sent`, `/emails/sent/{id}`                    | Bearer | sent emails                                  |
 | `GET /emails/replies`, `/emails/replies/{id}`              | Bearer | replies, with the email each one answers     |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |

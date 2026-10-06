@@ -1,11 +1,11 @@
 // What the shared drawer shows for each kind of item. Each kind supplies:
 //   section  -> data section that backs Previous/Next (loaded while the drawer shows this kind)
-//   list(sectionData, leadsFilter) -> items for Previous/Next, load(id) -> detail
+//   list(sectionData, leadsFilter, positiveView) -> items for Previous/Next, load(id) -> detail
 //   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox? }
 import { Icon } from './Icon';
 import { Badge, StatusBadge, SourceCell, ExtLink, MetaRow } from './ui';
-import { pad, fmtDate, toneOf } from '@/core/format';
-import { visibleLeads } from './DataProvider';
+import { pad, fmtDate, toneOf, REPLY_LABELS } from '@/core/format';
+import { visibleLeads, visiblePositive } from './DataProvider';
 import * as api from '@/core/api';
 
 const ActionButton = ({ onClick, icon, children }) => (
@@ -44,23 +44,32 @@ export function getKinds(goto) {
     },
   };
 
-  // Same drawer as a lead, but Previous/Next steps through positive leads only and the reply label is shown.
-  const positiveLead = {
+  // Same drawer as a lead, opened from a Positive Leads section: Previous/Next stays in that section
+  // (positive / review / questions, with the page's search and sort) and the latest reply's label
+  // and any review reason are shown.
+  const fromPositivePage = (group) => ({
     ...lead,
     section: 'positive',
-    list: (positive) => positive,
+    list: (positive, _filter, view) => visiblePositive(positive[group], view),
     describe: (d) => {
       const v = lead.describe(d);
-      const label = (
-        <MetaRow key="label" k="Reply Label">
-          {d.replyLabel === 'interested'
-            ? <Badge text="Interested" tone={toneOf('Interested')} />
-            : <span className="muted">{d.replyLabel || '—'}</span>}
-        </MetaRow>
-      );
-      return { ...v, rows: [...v.rows.slice(0, 7), label, ...v.rows.slice(7)] };
+      const text = REPLY_LABELS[d.replyLabel];
+      const extra = [
+        <MetaRow key="label" k="Latest Reply">
+          {text ? <Badge text={text} tone={toneOf(text)} /> : <span className="muted">—</span>}
+        </MetaRow>,
+        ...(d.reviewReason ? [
+          <MetaRow key="review" k="Needs Review">
+            <Badge text="Needs review" tone={toneOf('Needs review')} /> <span className="muted small">{d.reviewReason}</span>
+          </MetaRow>,
+        ] : []),
+      ];
+      return { ...v, rows: [...v.rows.slice(0, 7), ...extra, ...v.rows.slice(7)] };
     },
-  };
+  });
+  const positiveLead = fromPositivePage('positive');
+  const reviewLead = fromPositivePage('review');
+  const questionLead = fromPositivePage('questions');
 
   const sent = {
     section: 'sent',
@@ -146,5 +155,5 @@ export function getKinds(goto) {
     },
   };
 
-  return { lead, positiveLead, sent, reply, blog };
+  return { lead, positiveLead, reviewLead, questionLead, sent, reply, blog };
 }

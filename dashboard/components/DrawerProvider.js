@@ -16,7 +16,7 @@ export const useDrawer = () => useContext(DrawerCtx);
 export function DrawerProvider({ children }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { filter } = useLeadsFilter();
+  const { filter, positiveView } = useLeadsFilter();
   const [s, setS] = useState({ open: false, kind: null, id: null });
 
   const rootRef = useRef(null);
@@ -61,7 +61,7 @@ export function DrawerProvider({ children }) {
   const detail = toSection(detailQuery, null);
   const section = useSection(k?.section ?? null);
 
-  const items = k ? k.list(section.data, filter) : [];
+  const items = k ? k.list(section.data, filter, positiveView) : [];
   const index = items.findIndex((x) => x.id === s.id);
 
   const step = (delta) => {

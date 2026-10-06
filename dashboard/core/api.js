@@ -60,7 +60,14 @@ export async function pausePipeline(id) {
 export const getLeads = ({ status, source } = {}) => apiFetch(`/leads${qs({ status, source })}`);
 export const getLeadStats = () => apiFetch('/leads/stats');
 export const getLead = (id) => apiFetch(`/leads/${encodeURIComponent(id)}`);
-export const getPositiveLeads = () => apiFetch('/leads/positive');
+// -> { positive, review, questions, repliedLeads, pending }: leads judged on their latest human reply.
+// An older backend returns a plain list; fail cleanly (the page shows "Couldn't load" + Retry) instead of crashing.
+export async function getPositiveLeads() {
+  const data = await apiFetch('/leads/positive');
+  const ok = data && ['positive', 'review', 'questions'].every((k) => Array.isArray(data[k]));
+  if (!ok) throw new ApiError('Unexpected response from /leads/positive. Is the backend up to date?', 200);
+  return data;
+}
 
 // ---------- Emails ----------
 

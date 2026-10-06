@@ -6,6 +6,7 @@ frontend only has to swap its mock bodies for apiFetch() calls. Every route requ
 """
 
 import os
+import re
 from typing import Annotated, Any
 
 import asyncpg
@@ -25,7 +26,9 @@ select c.id, row_number() over (order by c.collected_at, c.id) as number,
        case when lower(coalesce(co.source, '')) like '%linkedin%' then 'linkedin'
             when lower(coalesce(co.source, '')) ~ '(^|[^a-z])(x|twitter)([^a-z]|$)' then 'x'
             else 'other' end as source,
-       case when exists (select 1 from replies r where r.contact_id = c.id)
+       -- Out-of-office and bounce messages are automatic, so they don't count as a response.
+       case when exists (select 1 from replies r where r.contact_id = c.id
+                                            and coalesce(r.label, '') not in ('ooo', 'bounce'))
             then 'Responded' else 'Awaiting' end as status,
        c.collected_at as added_at, c.last_engaged_at as last_contact_at
 from contacts c join companies co on co.id = c.company_id
@@ -91,6 +94,10 @@ async def _one(sql: str, *args: Any) -> dict:
     return _plain(row)
 
 
+async def _value(sql: str, *args: Any) -> Any:
+    return await (await _pg()).fetchval(sql, *args)
+
+
 def _plain(row: asyncpg.Record) -> dict:
     """Record -> JSON-ready camelCase dict (uuids and datetimes become strings)."""
     out = {}
@@ -137,24 +144,94 @@ async def lead_stats() -> dict:
     }
 
 
+# Each lead's latest classified reply written by a person (out-of-office and bounces are automatic, so skipped).
+# A lead is judged on this reply only, so a later "no" replaces an earlier "yes".
+_LATEST_HUMAN_REPLY = """
+select distinct on (r.contact_id) r.contact_id, r.id, r.received_at, r.label, r.review_note, r.body
+from replies r
+where r.label is not null and r.label not in ('ooo', 'bounce')
+order by r.contact_id, r.received_at desc
+"""
+
+# The reply classifier records "confidence 0.42 < 0.6" in review_note when it isn't sure of the label.
+_LOW_CONFIDENCE = re.compile(r"confidence\s+([\d.]+)\s*<", re.IGNORECASE)
+
+
+def _review_reason(note: str | None) -> str | None:
+    m = _LOW_CONFIDENCE.search(note or "")
+    return f"Low confidence ({float(m.group(1)):.2f})" if m else None
+
+
+# Labels whose low-confidence replies go to "Needs review" (a doubtful "no" may be a hidden "yes").
+_REVIEWABLE = ("interested", "question", "not_interested")
+
+
+def _follow_up_order(items: list[dict]) -> list[dict]:
+    """Leads still waiting for our answer first, longest-waiting at the top; then the rest, newest reply first."""
+    waiting = sorted((r for r in items if r["followUp"] == "waiting"), key=lambda r: r["repliedAt"])
+    rest = sorted((r for r in items if r["followUp"] != "waiting"), key=lambda r: r["repliedAt"], reverse=True)
+    return waiting + rest
+
+
 @router.get("/leads/positive")
-async def positive_leads() -> list[dict]:
+async def positive_leads() -> dict:
+    """Leads judged on their latest human reply, split into positive (interested, confident),
+    review (low confidence) and questions. followUp says whether we have answered that reply:
+    'replied' (sent), 'queued' (approved, not sent yet) or 'waiting'."""
     rows = await _rows(
         f"""select l.id, l.number, l.name, l.company, l.source, l.status,
-                   r.id as reply_id, r.received_at as replied_at, r.label, r.body
-            from replies r join ({_LEADS}) l on l.id = r.contact_id
-            where r.label = 'interested' order by r.received_at desc"""  # noqa: S608
+                   r.id as reply_id, r.received_at as replied_at, r.label, r.review_note, r.body,
+                   a.answered_at, a.answer_queued
+            from ({_LEADS}) l
+            join ({_LATEST_HUMAN_REPLY}) r on r.contact_id = l.id
+            left join lateral (
+              select min(e.sent_at) filter (where e.status = 'sent') as answered_at,
+                     coalesce(bool_or(e.status in ('approved', 'sending')), false) as answer_queued
+              from emails e where e.reply_id = r.id
+            ) a on true"""  # noqa: S608
     )
+    pending = await _value("select count(*) from replies where label is null")  # not classified yet
+    groups: dict[str, list[dict]] = {"positive": [], "review": [], "questions": []}
     for r in rows:
-        text = _reply_text(r.pop("body"))
-        r["preview"] = text if len(text) <= 100 else text[:99].rstrip() + "…"
-    return rows
+        r["preview"] = _preview(r.pop("body"))
+        r["reviewReason"] = _review_reason(r.pop("reviewNote"))
+        queued = r.pop("answerQueued")
+        r["followUp"] = "replied" if r["answeredAt"] else "queued" if queued else "waiting"
+        if r["reviewReason"] and r["label"] in _REVIEWABLE:
+            groups["review"].append(r)
+        elif r["label"] == "interested":
+            groups["positive"].append(r)
+        elif r["label"] == "question":
+            groups["questions"].append(r)
+    return {
+        **{k: _follow_up_order(v) for k, v in groups.items()},
+        "repliedLeads": len(rows),
+        "pending": pending or 0,
+    }
 
 
-def _reply_text(body: str | None) -> str:
-    """First paragraph after the greeting; falls back to the whole body."""
-    parts = [p.strip() for p in (body or "").split("\n\n") if p.strip()]
-    return parts[1] if len(parts) > 1 else (parts[0] if parts else "")
+# Same rules as the reply classifier's strip_quoted (agent/replies.py): keep only what the person wrote.
+_QUOTE_START = re.compile(r"^(on .{5,120} wrote:|-{2,}\s*original message|from: .+@)", re.IGNORECASE)
+_GREETING = re.compile(r"^(hi|hello|hey|dear|good (morning|afternoon|evening))\b.{0,40}$", re.IGNORECASE)
+
+
+def _strip_quoted(body: str | None) -> str:
+    kept: list[str] = []
+    for line in (body or "").splitlines():
+        if _QUOTE_START.match(line.strip()):
+            break
+        if not line.lstrip().startswith(">"):
+            kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def _preview(body: str | None, limit: int = 100) -> str:
+    """What the person wrote, without quoted mail or the greeting line, on one line."""
+    parts = [p.strip() for p in _strip_quoted(body).split("\n\n") if p.strip()]
+    if len(parts) > 1 and _GREETING.match(parts[0]):
+        parts = parts[1:]
+    text = " ".join(" ".join(parts).split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 @router.get("/leads/{lead_id}")
@@ -164,7 +241,7 @@ async def lead(lead_id: str) -> dict:
     except asyncpg.DataError as exc:
         raise HTTPException(404, "Not found") from exc
     reply = await (await _pg()).fetchrow(
-        "select id, label from replies where contact_id = $1::uuid order by received_at desc limit 1",
+        f"select id, label, review_note from ({_LATEST_HUMAN_REPLY}) r where contact_id = $1::uuid",  # noqa: S608
         lead_id,
     )
     email = await (await _pg()).fetchrow(
@@ -180,6 +257,7 @@ async def lead(lead_id: str) -> dict:
         else None
     )
     row["replyLabel"] = reply["label"] if reply else None
+    row["reviewReason"] = _review_reason(reply["review_note"]) if reply else None
     row["notes"] = None
     return row
 

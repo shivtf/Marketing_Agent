@@ -1,6 +1,7 @@
 'use client';
 // Data for every page, cached by TanStack Query: each section is fetched on first use, shared between pages,
-// and refetched in the background when it goes stale (window refocus, reconnect). Also holds the leads filter.
+// and refetched in the background when it goes stale (window refocus, reconnect). Also holds the leads filter
+// and the Positive Leads search/sort, so they survive tab switches and the drawer can step through what is shown.
 import { createContext, useContext, useState } from 'react';
 import { QueryClient, QueryClientProvider, skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/core/api';
@@ -14,11 +15,29 @@ const FETCHERS = {
   blogs: api.getBlogs,
   positive: api.getPositiveLeads,
 };
-const EMPTY = { pipelines: [], stats: null, leads: [], sent: [], replies: [], blogs: [], positive: [] };
+const EMPTY = {
+  pipelines: [], stats: null, leads: [], sent: [], replies: [], blogs: [],
+  positive: { positive: [], review: [], questions: [], repliedLeads: 0 },
+};
 
 export const visibleLeads = (leads, filter) => leads.filter((l) =>
   (filter.status === 'all' || l.status.toLowerCase() === filter.status)
   && (filter.source === 'all' || l.source === filter.source));
+
+// Positive Leads search + sort ({ q, sort }), applied to one group. 'followup' keeps the backend order
+// (waiting for our answer first, longest-waiting on top).
+const SORTS = {
+  newest: (a, b) => b.repliedAt.localeCompare(a.repliedAt),
+  oldest: (a, b) => a.repliedAt.localeCompare(b.repliedAt),
+  name: (a, b) => (a.name || '').localeCompare(b.name || ''),
+};
+export function visiblePositive(items, { q, sort }) {
+  const needle = q.trim().toLowerCase();
+  const found = needle
+    ? items.filter((l) => [l.name, l.company, l.preview].some((v) => v?.toLowerCase().includes(needle)))
+    : items;
+  return SORTS[sort] ? [...found].sort(SORTS[sort]) : found;
+}
 
 // A query as the pages see it: { status: 'loading' | 'ready' | 'error', data, reload }.
 // Data already on screen stays 'ready' even if a background refetch fails.
@@ -42,9 +61,10 @@ export function DataProvider({ children }) {
     defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
   }));
   const [filter, setFilter] = useState({ status: 'all', source: 'all' });
+  const [positiveView, setPositiveView] = useState({ q: '', sort: 'followup' });
   return (
     <QueryClientProvider client={client}>
-      <FilterCtx.Provider value={{ filter, setFilter }}>{children}</FilterCtx.Provider>
+      <FilterCtx.Provider value={{ filter, setFilter, positiveView, setPositiveView }}>{children}</FilterCtx.Provider>
     </QueryClientProvider>
   );
 }

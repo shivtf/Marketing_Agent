@@ -1,6 +1,7 @@
 -- Sample rows so the dashboard has something to show. Run in the Supabase SQL editor.
 -- Safe to run twice. All rows use *.example domains and 'sample-' keys, so the cleanup at the bottom
--- removes exactly these rows and nothing else. Requires supabase/migrations/0002_core.sql.
+-- removes exactly these rows and nothing else. Requires supabase/migrations/0002_core.sql, 0005_email_tracking.sql (emails.reply_id)
+-- and 0006_reply_review.sql (replies.review_note).
 
 insert into companies (id, name, domain, status, source, source_url) values
   ('00000000-0000-4000-8000-0000000000a1', 'CloudScale',      'cloudscale.example',  'engaged',       'linkedin', 'https://www.linkedin.com/company/cloudscale'),
@@ -35,11 +36,31 @@ insert into emails (id, contact_id, campaign_id, status, subject, body, mailbox,
 on conflict (id) do nothing;
 
 -- Replies: two interested (these appear on Positive Leads), one question, one not interested.
+-- More replies below cover the other Positive Leads rules.
 insert into replies (id, email_id, contact_id, message_id, status, label, body, received_at) values
   ('00000000-0000-4000-8000-0000000000e1', '00000000-0000-4000-8000-0000000000d1', '00000000-0000-4000-8000-0000000000b1', '<sample-reply-1@example>', 'classified', 'interested',     E'Hi Alex,\n\nThanks for reaching out, this looks interesting. Could you share a couple of examples of posts you have published for similar teams? A call on Thursday afternoon would work for me.\n\nThanks,\nPriya', now() - interval '4 days'),
   ('00000000-0000-4000-8000-0000000000e2', '00000000-0000-4000-8000-0000000000d2', '00000000-0000-4000-8000-0000000000b2', '<sample-reply-2@example>', 'classified', 'question',       E'Hi Alex,\n\nWe already work with an agency, but I would be curious how your reporting works. Can you send a short deck?\n\nThanks,\nDaniel',                                                              now() - interval '3 days'),
   ('00000000-0000-4000-8000-0000000000e3', '00000000-0000-4000-8000-0000000000d3', '00000000-0000-4000-8000-0000000000b3', '<sample-reply-3@example>', 'classified', 'interested',     E'Hi Alex,\n\nPlease send pricing for a content package and we will review it internally.\n\nThanks,\nAisha',                                                                                          now() - interval '2 days'),
   ('00000000-0000-4000-8000-0000000000e4', '00000000-0000-4000-8000-0000000000d5', '00000000-0000-4000-8000-0000000000b5', '<sample-reply-4@example>', 'classified', 'not_interested', E'Hi Alex,\n\nNot a fit for us right now, but please check back in the new year.\n\nThanks,\nSophia',                                                                                         now() - interval '1 day')
+on conflict (id) do nothing;
+
+-- Replies that exercise the Positive Leads rules (each lead is judged on its latest reply from a person):
+--   e5 Marcus: only an out-of-office reply       -> ignored; he stays "Awaiting" and isn't counted as replied
+--   e6 Sophia: said yes before her later "no"   -> the later "no" (e4) wins, so she is not positive
+--   e7 Li:     interested, but low confidence     -> "Needs review"
+--   e8 Daniel: new reply not classified yet       -> "1 new reply is being classified"; his question (e2) still shows
+-- Expected on Positive Leads: Positive 2 (Aisha waiting, Priya answered), Needs review 1, Questions 1,
+-- Leads Replied 5, Positive Rate 40%.
+insert into replies (id, email_id, contact_id, message_id, status, label, review_note, body, received_at) values
+  ('00000000-0000-4000-8000-0000000000e5', '00000000-0000-4000-8000-0000000000d4', '00000000-0000-4000-8000-0000000000b4', '<sample-reply-5@example>', 'handled',    'ooo',        null,                    E'I am out of the office until Monday with limited access to email.\n\nMarcus',                                                       now() - interval '47 hours'),
+  ('00000000-0000-4000-8000-0000000000e6', '00000000-0000-4000-8000-0000000000d5', '00000000-0000-4000-8000-0000000000b5', '<sample-reply-6@example>', 'classified', 'interested', null,                    E'Hi Alex,\n\nThis sounds interesting, let me check with the team.\n\nSophia',                                                        now() - interval '29 hours'),
+  ('00000000-0000-4000-8000-0000000000e7', null,                                   '00000000-0000-4000-8000-0000000000b6', '<sample-reply-7@example>', 'classified', 'interested', 'confidence 0.45 < 0.6', E'Hi Alex,\n\nMaybe later in the year. Could be interesting once our budget is set.\n\nLi',                                           now() - interval '10 hours'),
+  ('00000000-0000-4000-8000-0000000000e8', '00000000-0000-4000-8000-0000000000d2', '00000000-0000-4000-8000-0000000000b2', '<sample-reply-8@example>', 'received',   null,         null,                    E'Hi Alex,\n\nFollowing up on my question about reporting.\n\nDaniel',                                                                 now() - interval '1 hour')
+on conflict (id) do nothing;
+
+-- Our answer to Priya's reply (e1), so she shows "We replied". Step 2: step 1 is the first outreach email.
+insert into emails (id, contact_id, campaign_id, step, status, subject, body, mailbox, idempotency_key, sent_at, reply_id) values
+  ('00000000-0000-4000-8000-0000000000d7', '00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000c1', 2, 'sent', 'Re: Collaboration opportunity', E'Hi Priya,\n\nGreat to hear. Does Thursday at 3pm or Friday at 11am work for a short call?\n\nBest,\nAlex', 'you@youragency.example', 'sample-email-7', now() - interval '3 days', '00000000-0000-4000-8000-0000000000e1')
 on conflict (id) do nothing;
 
 insert into content_posts (id, title, body_md, status, devto_url, published_at) values

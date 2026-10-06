@@ -1,6 +1,9 @@
 // Small formatting helpers shared by every page and the drawer.
-// Reply labels (from outreach.classify_reply / replies.label) that count as a positive lead.
-export const POSITIVE_LABELS = ['interested'];
+// Reply labels from the reply classifier (replies.label), as shown in the dashboard.
+export const REPLY_LABELS = {
+  interested: 'Interested', question: 'Question', not_interested: 'Not interested',
+  ooo: 'Out of office', bounce: 'Bounced', unsubscribe: 'Unsubscribed',
+};
 
 export const pad = (n) => String(n).padStart(3, '0');
 
@@ -14,7 +17,10 @@ export function fmtDate(iso, mode = 'full') {
   return mode === 'table' ? `${date} ${time}` : `${date}, ${time}`;
 }
 
-export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red' }[t] || 'gray');
+// Whole days between an ISO time and now (0 = less than a day ago).
+export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0);
+
+export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', 'Needs review': 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red' }[t] || 'gray');
 
 export const SOURCES = {
   linkedin: { label: 'LinkedIn', icon: 'linkedin', color: '#2f6fed' },
