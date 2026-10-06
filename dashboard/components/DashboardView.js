@@ -1,5 +1,5 @@
 'use client';
-// Page 1: Pipeline Control + Leads Overview.
+// Page 1: Agent Control + Leads Overview.
 import { useState } from 'react';
 import { Icon } from './Icon';
 import { OpenRow } from './OpenRow';
@@ -8,63 +8,51 @@ import { StatusBadge, SourceCell, Skeleton, ErrorBox, CardHead, ViewCell, DataTa
 import * as api from '@/core/api';
 import { pad, fmtDate, SOURCES } from '@/core/format';
 
-// ---------- Pipeline Control ----------
-function PipelineControl() {
-  const { status, data, reload } = useSection('pipelines');
+// ---------- Agent Control ----------
+// There is one marketing agent (approvals happen in Slack).
+
+function AgentControl() {
+  const { status, data, reload } = useSection('agent');
   const update = useUpdateSection();
   const [error, setError] = useState('');
 
-  async function act(action, id) {
-    const ids = id === 'all' ? data.map((p) => p.id) : [id];
-    const prev = new Map(data.map((p) => [p.id, p.status]));
-    const apply = (next) => update('pipelines', (list) => list.map((p) => (
-      ids.includes(p.id) ? { ...p, status: next(p) } : p
-    )));
+  async function act(action) {
+    const prev = data.status;
     setError('');
     // Optimistic update so the badge and buttons change instantly.
-    apply(() => (action === 'start' ? 'running' : 'paused'));
+    update('agent', (a) => ({ ...a, status: action === 'start' ? 'running' : 'paused' }));
     try {
-      await Promise.all(ids.map((i) => (action === 'start' ? api.startPipeline(i) : api.pausePipeline(i))));
+      await (action === 'start' ? api.startAgent() : api.pauseAgent());
     } catch {
-      apply((p) => prev.get(p.id));
-      setError(`Couldn't ${action} the pipeline. Please try again.`);
+      update('agent', (a) => ({ ...a, status: prev }));
+      setError(`Couldn't ${action} the agent. Please try again.`);
     }
   }
 
-  const off = status !== 'ready';
-  let cards;
-  if (status === 'loading') cards = [0, 1].map((i) => <div key={i} className="card"><Skeleton rows={3} /></div>);
-  else if (status === 'error') cards = <div className="card span2"><ErrorBox what="pipelines" onRetry={reload} /></div>;
+  let card;
+  if (status === 'loading') card = <div className="card"><Skeleton rows={3} /></div>;
+  else if (status === 'error') card = <div className="card"><ErrorBox what="the agent status" onRetry={reload} /></div>;
   else {
-    cards = data.map((p) => {
-      const running = p.status === 'running';
-      return (
-        <div key={p.id} className="card pipe">
-          <div className="card-head">
-            <div className="tile"><Icon name={p.id === 'email' ? 'mail' : 'doc'} /></div>
-            <div><div className="card-title">{p.name}</div><StatusBadge text={running ? 'Running' : 'Paused'} /></div>
-          </div>
-          <p className="desc">{p.description}</p>
-          <div className="row pipe-btns">
-            <button className="btn primary" onClick={() => act('start', p.id)}><Icon name="play" /> Start</button>
-            <button className="btn outline" onClick={() => act('pause', p.id)}><Icon name="pause" /> Pause</button>
-          </div>
+    const running = data.status === 'running';
+    card = (
+      <div className="card pipe agent-card">
+        <div className="card-head">
+          <div className="tile"><Icon name="bolt" /></div>
+          <div><div className="card-title">Marketing Agent</div><StatusBadge text={running ? 'Running' : 'Paused'} /></div>
         </div>
-      );
-    });
+        <div className="row">
+          <button className="btn primary" disabled={running} onClick={() => act('start')}><Icon name="play" /> Start</button>
+          <button className="btn outline" disabled={!running} onClick={() => act('pause')}><Icon name="pause" /> Pause</button>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <section aria-label="Pipeline control">
-      <div className="section-head">
-        <h2 className="section-title">Pipeline Control</h2>
-        <div className="row">
-          <button className="btn primary" disabled={off} onClick={() => act('start', 'all')}><Icon name="play" /> Start All</button>
-          <button className="btn outline" disabled={off} onClick={() => act('pause', 'all')}><Icon name="pause" /> Pause All</button>
-        </div>
-      </div>
+    <section aria-label="Agent control">
+      <div className="section-head"><h2 className="section-title">Agent Control</h2></div>
       {error && <div className="notice">{error}</div>}
-      <div className="grid2">{cards}</div>
+      {card}
     </section>
   );
 }
@@ -175,7 +163,7 @@ export default function DashboardView() {
   const stats = useSection('stats');
   return (
     <main className="page">
-      <PipelineControl />
+      <AgentControl />
       <section aria-label="Leads overview">
         <div className="section-head"><h2 className="section-title">Leads Overview</h2></div>
         <div className="stack-v">

@@ -1,6 +1,6 @@
 // All data access lives here. Leads, emails and blogs come from the backend (eval/dashboardbackend/app/data.py);
-// pipelines are still mock data. Nothing else in the app touches data.js.
-import { pipelines } from './data.js';
+// the agent's Start/Pause state is still mock data. Nothing else in the app touches data.js.
+import { agent } from './data.js';
 import { getSession } from './auth';
 
 // ---------- Backend (eval/dashboardbackend) ----------
@@ -36,23 +36,24 @@ const qs = (params) => {
   return q ? `?${q}` : '';
 };
 
-// ---------- Pipelines (mock: no backend table yet) ----------
+// ---------- Agent (mock: no backend table yet) ----------
+// -> { status: 'running' | 'paused' }
 
-export async function getPipelines() {
+export async function getAgent() {
   await wait();
-  return clone(pipelines);
+  return clone(agent);
 }
 
-export async function startPipeline(id) {
+export async function startAgent() {
   await wait(200);
-  pipelines.find((p) => p.id === id).status = 'running';
-  return clone(pipelines);
+  agent.status = 'running';
+  return clone(agent);
 }
 
-export async function pausePipeline(id) {
+export async function pauseAgent() {
   await wait(200);
-  pipelines.find((p) => p.id === id).status = 'paused';
-  return clone(pipelines);
+  agent.status = 'paused';
+  return clone(agent);
 }
 
 // ---------- Leads ----------

@@ -325,3 +325,5 @@ dialog.confirm::backdrop { background: rgba(20, 22, 43, .35); backdrop-filter: b
 .search-input::placeholder { color: var(--muted); }
 .search-input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 @media (max-width: 760px) { .search-input { min-width: 0; flex: 1 1 100%; } }
+.agent-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.agent-card .card-head { margin-bottom: 0; }

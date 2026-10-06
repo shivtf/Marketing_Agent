@@ -2,10 +2,9 @@
 // Everything below is generated deterministically so counts always add up
 // (248 leads = 144 LinkedIn + 60 X + 44 Other = 152 Responded + 96 Awaiting).
 
-export const pipelines = [
-  { id: 'email', name: 'Email Outreach', description: 'Send personalized emails to new leads.', status: 'running' },
-  { id: 'blog', name: 'Blog Publishing', description: 'Publish and distribute blog content.', status: 'paused' },
-];
+// The one marketing agent (mock: no backend table yet). One run does: replies -> send approved emails ->
+// follow-ups -> find leads -> blog post. Approvals happen in Slack.
+export const agent = { status: 'paused' };
 
 // ---------- helpers ----------
 function rng(seed) {

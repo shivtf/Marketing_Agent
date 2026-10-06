@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider, skipToken, useQuery, useQueryClient }
 import * as api from '@/core/api';
 
 const FETCHERS = {
-  pipelines: api.getPipelines,
+  agent: api.getAgent,
   stats: api.getLeadStats,
   leads: () => api.getLeads(),
   sent: api.getSentEmails,
@@ -16,7 +16,7 @@ const FETCHERS = {
   positive: api.getPositiveLeads,
 };
 const EMPTY = {
-  pipelines: [], stats: null, leads: [], sent: [], replies: [], blogs: [],
+  agent: null, stats: null, leads: [], sent: [], replies: [], blogs: [],
   positive: { positive: [], review: [], questions: [], repliedLeads: 0 },
 };
 
