@@ -8,9 +8,8 @@ export async function getSession() {
 
 export const isAuthenticated = async () => !!(await getSession());
 
-// Roles and the first-login flag live in app_metadata, which only the server can write.
+// Roles live in app_metadata, which only the server can write.
 export const isAdmin = (session) => session?.user?.app_metadata?.role === 'admin';
-export const mustChangePassword = (session) => !!session?.user?.app_metadata?.must_change_password;
 
 export async function signIn(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -39,8 +38,7 @@ export async function authFetch(path, options = {}) {
   return body;
 }
 
-// Verifies the current password server-side, then refreshes the session so the first-login flag clears.
+// Verifies the current password server-side, then sets the new one.
 export async function changePassword(current, next) {
   await authFetch('/api/account/password', { method: 'POST', body: JSON.stringify({ current, next }) });
-  await supabase.auth.refreshSession();
 }

@@ -18,7 +18,7 @@ export default function LoginView() {
   let cancelled = false;
   auth.getSession().then((session) => {
     if (cancelled) return;
-    if (session) router.replace(auth.mustChangePassword(session) ? '/change-password' : '/dashboard');
+    if (session) router.replace('/dashboard');
     else { document.body.classList.add('auth-view'); emailRef.current?.focus(); }
   });
   return () => { cancelled = true; document.body.classList.remove('auth-view'); };
@@ -31,8 +31,8 @@ export default function LoginView() {
     setMsg({ text: '', tone: 'error' });
     const email = emailRef.current.value.trim();
     try {
-      const session = await auth.signIn(email, passwordRef.current.value);
-      router.replace(auth.mustChangePassword(session) ? '/change-password' : '/dashboard');
+      await auth.signIn(email, passwordRef.current.value);
+      router.replace('/dashboard');
       return;
     } catch (err) {
       setMsg({ text: err.message || 'Something went wrong. Please try again.', tone: 'error' });

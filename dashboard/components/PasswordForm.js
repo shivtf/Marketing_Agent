@@ -1,9 +1,9 @@
 'use client';
-// Current + new + confirm password form, shared by the profile page and the forced first-login page.
+// Current + new + confirm password form on the profile page.
 import { useState } from 'react';
 import * as auth from '@/core/auth';
 
-export default function PasswordForm({ submitLabel = 'Change password', onDone }) {
+export default function PasswordForm() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
 
@@ -21,7 +21,6 @@ export default function PasswordForm({ submitLabel = 'Change password', onDone }
       await auth.changePassword(current, next);
       form.reset();
       setMsg({ text: 'Password updated.', tone: 'ok' });
-      onDone?.();
     } catch (err) {
       setMsg({ text: err.message, tone: 'error' });
     } finally {
@@ -41,7 +40,7 @@ export default function PasswordForm({ submitLabel = 'Change password', onDone }
         <input name="confirm" type="password" autoComplete="new-password" required />
       </label>
       <div className="auth-msg" role="alert" aria-live="polite" data-tone={msg.tone}>{msg.text}</div>
-      <button className={`btn primary auth-submit${busy ? ' loading' : ''}`} type="submit" disabled={busy}>{submitLabel}</button>
+      <button className={`btn primary auth-submit${busy ? ' loading' : ''}`} type="submit" disabled={busy}>Change password</button>
     </form>
   );
 }

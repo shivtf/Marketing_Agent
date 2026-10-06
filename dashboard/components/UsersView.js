@@ -1,8 +1,12 @@
 'use client';
-// Admin page: create employee accounts (default password, forced change at first login) and reset passwords.
+// Admin page: create employee accounts with a password the admin chooses, set new passwords
+// and remove accounts from the dashboard (they stay in Supabase). Employees can change their password from Profile.
 import { useCallback, useEffect, useState } from 'react';
 import { CardHead, DataTable, Badge } from './ui';
+import { Icon } from './Icon';
 import * as admin from '@/core/admin';
+import { getSession } from '@/core/auth';
+import { useConfirm } from './ConfirmDialog';
 
 const fmt = (iso) => (iso ? new Date(iso).toLocaleDateString() : 'Never');
 
@@ -11,6 +15,10 @@ export default function UsersView() {
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
+  const [meId, setMeId] = useState(null);
+  const [removing, setRemoving] = useState(null); // id of the user being removed
+  const [confirmDialog, confirm] = useConfirm();
+  const [showPw, setShowPw] = useState(false);
 
   const load = useCallback(async () => {
     setStatus('loading');
@@ -22,18 +30,27 @@ export default function UsersView() {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { getSession().then((s) => setMeId(s?.user.id ?? null)); }, []);
+
+  // Success messages clear themselves after a few seconds; errors stay until the next action.
+  useEffect(() => {
+    if (msg.tone !== 'ok' || !msg.text) return undefined;
+    const t = setTimeout(() => setMsg({ text: '', tone: 'error' }), 4000);
+    return () => clearTimeout(t);
+  }, [msg]);
 
   async function onCreate(e) {
     e.preventDefault();
     if (busy) return;
     const form = e.currentTarget;
-    const { name, email } = Object.fromEntries(new FormData(form));
+    const { name, email, password } = Object.fromEntries(new FormData(form));
     setBusy(true);
     setMsg({ text: '', tone: 'error' });
     try {
-      const u = await admin.createUser(name, email);
+      const u = await admin.createUser(name, email, password);
       form.reset();
-      setMsg({ text: `Created ${u.email}. They sign in with the default employee password and must change it at first login.`, tone: 'ok' });
+      setShowPw(false);
+      setMsg({ text: `Created ${u.email}. Share the password with them; they can change it later from Profile.`, tone: 'ok' });
       await load();
     } catch (err) {
       setMsg({ text: err.message, tone: 'error' });
@@ -43,14 +60,41 @@ export default function UsersView() {
   }
 
   async function onReset(u) {
-    if (!window.confirm(`Reset ${u.email} to the default password? They must change it at next login.`)) return;
+    const password = await confirm({
+      title: 'Set a new password',
+      message: `Choose a new password for ${u.email} and share it with them.`,
+      confirmLabel: 'Save password',
+      field: { label: 'New password' },
+    });
+    if (!password) return;
     setMsg({ text: '', tone: 'error' });
     try {
-      await admin.resetUserPassword(u.id);
-      setMsg({ text: `${u.email} was reset to the default password.`, tone: 'ok' });
+      await admin.setUserPassword(u.id, password);
+      setMsg({ text: `New password saved for ${u.email}.`, tone: 'ok' });
       await load();
     } catch (err) {
       setMsg({ text: err.message, tone: 'error' });
+    }
+  }
+
+  async function onRemove(u) {
+    const ok = await confirm({
+      title: `Remove ${u.name || 'this user'}?`,
+      message: `${u.email} will be removed from the dashboard and will no longer be able to sign in.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    setMsg({ text: '', tone: 'error' });
+    setRemoving(u.id);
+    try {
+      await admin.removeUser(u.id);
+      setUsers((list) => list.filter((x) => x.id !== u.id));
+      setMsg({ text: `${u.email} was removed.`, tone: 'ok' });
+    } catch (err) {
+      setMsg({ text: err.message, tone: 'error' });
+    } finally {
+      setRemoving(null);
     }
   }
 
@@ -70,9 +114,17 @@ export default function UsersView() {
       <td>{u.name || '—'}</td>
       <td>{u.email}</td>
       <td>{u.role === 'admin' ? <Badge text="Admin" tone="gray" /> : 'Employee'}</td>
-      <td>{u.mustChangePassword ? <Badge text="Default password" tone="amber" /> : <span className="muted">Set</span>}</td>
       <td>{fmt(u.lastSignInAt)}</td>
-      <td><button className="btn" type="button" onClick={() => onReset(u)}>Reset password</button></td>
+      <td>
+        {u.id === meId ? <span className="muted small">You</span> : (
+          <div className="user-actions">
+            <button className="btn" type="button" onClick={() => onReset(u)}>Reset password</button>
+            <button className="btn danger" type="button" disabled={removing === u.id} onClick={() => onRemove(u)}>
+              {removing === u.id ? 'Removing…' : 'Remove'}
+            </button>
+          </div>
+        )}
+      </td>
     </tr>
   ));
 
@@ -81,7 +133,7 @@ export default function UsersView() {
       <div className="page-head">
         <h1 className="page-title">Users</h1>
         <p className="muted">
-          Create employee accounts. New accounts get the default password and must change it at first login.
+          Create employee accounts and choose their password. They can change it any time from their Profile.
         </p>
       </div>
       <section className="card">
@@ -92,6 +144,28 @@ export default function UsersView() {
             <span>Email</span>
             <input name="email" type="email" autoComplete="off" placeholder="employee@company.com" required />
           </label>
+          <label className="field">
+            <span>Password</span>
+            <span className="pw-wrap">
+              <input
+                name="password"
+                type={showPw ? 'text' : 'password'}
+                autoComplete="new-password"
+                placeholder="At least 8 characters"
+                minLength={8}
+                required
+              />
+              <button
+                className="pw-toggle"
+                type="button"
+                aria-label={showPw ? 'Hide password' : 'Show password'}
+                aria-pressed={showPw}
+                onClick={() => setShowPw(!showPw)}
+              >
+                <Icon name="eye" />
+              </button>
+            </span>
+          </label>
           <button className={`btn primary auth-submit${busy ? ' loading' : ''}`} type="submit" disabled={busy}>Create user</button>
         </form>
         <div className="auth-msg" role="alert" aria-live="polite" data-tone={msg.tone}>{msg.text}</div>
@@ -100,9 +174,10 @@ export default function UsersView() {
         <CardHead icon="users" title="All users" />
         <DataTable
           status={status} what="users" onRetry={load} rows={rows} emptyIcon="users" emptyText="No users yet."
-          head={['Name', 'Email', 'Role', 'Password', 'Last sign-in', ''].map((h, i) => <th key={i}>{h}</th>)}
+          head={['Name', 'Email', 'Role', 'Last sign-in', ''].map((h, i) => <th key={i}>{h}</th>)}
         />
       </section>
+      {confirmDialog}
     </main>
   );
 }

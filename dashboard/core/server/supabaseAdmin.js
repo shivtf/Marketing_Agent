@@ -37,7 +37,6 @@ export const summarize = (u) => ({
   email: u.email,
   name: u.user_metadata?.name || '',
   role: u.app_metadata?.role || 'employee',
-  mustChangePassword: !!u.app_metadata?.must_change_password,
   createdAt: u.created_at,
   lastSignInAt: u.last_sign_in_at,
 });

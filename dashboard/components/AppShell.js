@@ -70,8 +70,6 @@ export function AppShell({ children }) {
       const session = await auth.getSession();
       if (cancelled) return;
       if (!session) { router.replace('/login'); return; }
-      // Employees still on the default password can't use the app until they set their own.
-      if (auth.mustChangePassword(session)) { router.replace('/change-password'); return; }
       setAdmin(auth.isAdmin(session));
       setState('ready');
       try {
