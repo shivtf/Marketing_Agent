@@ -112,13 +112,14 @@ export function getKinds(goto) {
           <MetaRow key="subj" k="Subject">{d.subject}</MetaRow>,
           <MetaRow key="recv" k="Date/Time Received">{fmtDate(d.receivedAt)}</MetaRow>,
         ],
-        action: (
+        // A reply may not be linked to one of our emails (e.g. it arrived on a new thread).
+        action: o ? (
           <>
             <div className="linked-label">In reply to</div>
             <div className="linked"><b>Email #{pad(o.number)}</b><span className="muted">{o.subject}</span></div>
             <ActionButton icon="ext" onClick={() => goto('history', 'sent', o.id)}>Open original email</ActionButton>
           </>
-        ),
+        ) : <div className="muted small">Not linked to a sent email.</div>,
         bodyTitle: 'Reply Body', body: d.body,
       };
     },
@@ -150,7 +151,7 @@ export function getKinds(goto) {
             <Icon name="ext" /> View live post
           </a>
         ) : null,
-        bodyTitle: 'Content', body: `## ${d.title}\n\n${d.content.replace(/^## /gm, '### ')}`,
+        bodyTitle: 'Content', body: `## ${d.title}\n\n${(d.content || '').replace(/^## /gm, '### ')}`,
       };
     },
   };

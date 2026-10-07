@@ -31,9 +31,13 @@ const ICONS = {
   ext: stroke('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>', 16),
   alert: stroke('<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>', 24),
 };
+ICONS.LinkedIn = ICONS.linkedin; // blog site name from the backend
+
+// Unknown names render nothing, so unexpected data (e.g. a new blog site) can't crash a page.
 
 export function Icon({ name }) {
   const i = ICONS[name];
+  if (!i) return null;
   const props = { width: i.w, height: i.w, viewBox: '0 0 24 24', 'aria-hidden': true, dangerouslySetInnerHTML: { __html: i.body } };
   return i.stroke
     ? <svg {...props} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />

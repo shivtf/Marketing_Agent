@@ -20,7 +20,7 @@ export function fmtDate(iso, mode = 'full') {
 // Whole days between an ISO time and now (0 = less than a day ago).
 export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0);
 
-export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', 'Needs review': 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red' }[t] || 'gray');
+export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'amber', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red' }[t] || 'gray');
 
 export const SOURCES = {
   linkedin: { label: 'LinkedIn', icon: 'linkedin', color: '#2f6fed' },

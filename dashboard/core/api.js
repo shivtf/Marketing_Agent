@@ -1,6 +1,4 @@
-// All data access lives here. Leads, emails and blogs come from the backend (eval/dashboardbackend/app/data.py);
-// the agent's Start/Pause state is still mock data. Nothing else in the app touches data.js.
-import { agent } from './data.js';
+// All data access lives here. Everything comes from the backend (dashboardbackend/app).
 import { getSession } from './auth';
 
 // ---------- Backend (eval/dashboardbackend) ----------
@@ -22,39 +20,29 @@ export async function apiFetch(path, options = {}) {
   } catch {
     throw new ApiError('Cannot reach the server.', 0);
   }
-  if (!res.ok) throw new ApiError(`Request failed (${res.status})`, res.status);
+  if (!res.ok) {
+    // FastAPI puts the reason in { detail } (e.g. a missing table); show it when it's plain text.
+    const detail = await res.json().then((b) => b.detail).catch(() => null);
+    throw new ApiError(typeof detail === 'string' ? detail : `Request failed (${res.status})`, res.status);
+  }
   return res.json();
 }
 
 // GET /auth/me -> { id, email, role }; 401 when the token is invalid or expired
 export const getMe = () => apiFetch('/auth/me');
 
-const wait = (ms = 350) => new Promise((r) => setTimeout(r, ms));
-const clone = (x) => JSON.parse(JSON.stringify(x));
 const qs = (params) => {
   const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
   return q ? `?${q}` : '';
 };
 
-// ---------- Agent (mock: no backend table yet) ----------
-// -> { status: 'running' | 'paused' }
+// ---------- Agent (dashboardbackend/app/agent.py -> pipeline control API, see pipeline-api.md) ----------
+// -> { desiredState, state: 'running' | 'stopped' | 'offline', online, inSync, requestedBy, currentPass, nextPassAt,
+//      lastPass, sendingEnabled, testMode, ... }. Start/Stop are requests the office machine applies within seconds.
 
-export async function getAgent() {
-  await wait();
-  return clone(agent);
-}
-
-export async function startAgent() {
-  await wait(200);
-  agent.status = 'running';
-  return clone(agent);
-}
-
-export async function pauseAgent() {
-  await wait(200);
-  agent.status = 'paused';
-  return clone(agent);
-}
+export const getAgent = () => apiFetch('/agent');
+export const startAgent = () => apiFetch('/agent/start', { method: 'POST' });
+export const stopAgent = () => apiFetch('/agent/stop', { method: 'POST' });
 
 // ---------- Leads ----------
 

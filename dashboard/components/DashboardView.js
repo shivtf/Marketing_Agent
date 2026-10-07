@@ -9,23 +9,63 @@ import * as api from '@/core/api';
 import { pad, fmtDate, SOURCES } from '@/core/format';
 
 // ---------- Agent Control ----------
-// There is one marketing agent (approvals happen in Slack).
+// There is one marketing agent, on the office machine (approvals happen in Slack). Start/Stop are requests: the agent
+// applies them within about 5 s (stopping can take up to 30 s), so the status is polled until inSync (DataProvider).
+
+const STEPS = {
+  inbox: 'Reading the inbox', replies: 'Classifying replies', send: 'Sending approved emails',
+  followups: 'Drafting follow-ups', leads: 'Finding leads', blog: 'Writing the blog post',
+};
+const OUTCOMES = { succeeded: 'Succeeded', failed: 'Failed', stopped: 'Stopped' };
+
+// Badge, note and button for the pipeline status (pipeline-api.md, "Suggested UI").
+function describeAgent(a) {
+  const wantsRun = a.desiredState === 'running';
+  if (!a.online) {
+    return { badge: 'Offline', wantsRun, note: `Office machine offline.${wantsRun ? ' It will start when it comes back.' : ''}` };
+  }
+  if (!a.inSync) {
+    return {
+      badge: wantsRun ? 'Starting…' : 'Stopping…', wantsRun, busy: true,
+      note: wantsRun ? 'Starting within a few seconds.' : 'Stopping after the current step (up to 30 s).',
+    };
+  }
+  if (a.state === 'running') {
+    const step = a.currentPass && (STEPS[a.currentPass.step] || a.currentPass.step);
+    const note = step ? `${step}…` : a.nextPassAt ? `Next pass at ${fmtDate(a.nextPassAt, 'table')}.` : 'Running.';
+    return { badge: 'Running', wantsRun, note };
+  }
+  return { badge: 'Stopped', wantsRun, note: 'Nothing is searched, drafted or sent until you press Start.' };
+}
+
+function AgentNote({ agent, note }) {
+  const last = agent.lastPass;
+  const lines = [
+    note,
+    last && `Last pass: ${OUTCOMES[last.outcome] || last.outcome} · ${fmtDate(last.finishedAt || last.startedAt, 'table')}`,
+    agent.requestedBy && `Last ${agent.desiredState === 'running' ? 'started' : 'stopped'} by ${agent.requestedBy}.`,
+    agent.sendingEnabled === false && 'Email sending is off.',
+    agent.testMode && 'Test mode: emails go to the test inbox.',
+  ].filter(Boolean);
+  return <div className="muted small agent-note">{lines.map((l) => <div key={l}>{l}</div>)}</div>;
+}
 
 function AgentControl() {
   const { status, data, reload } = useSection('agent');
   const update = useUpdateSection();
+  const [acting, setActing] = useState(false);
   const [error, setError] = useState('');
 
   async function act(action) {
-    const prev = data.status;
     setError('');
-    // Optimistic update so the badge and buttons change instantly.
-    update('agent', (a) => ({ ...a, status: action === 'start' ? 'running' : 'paused' }));
+    setActing(true);
     try {
-      await (action === 'start' ? api.startAgent() : api.pauseAgent());
-    } catch {
-      update('agent', (a) => ({ ...a, status: prev }));
-      setError(`Couldn't ${action} the agent. Please try again.`);
+      const fresh = await (action === 'start' ? api.startAgent() : api.stopAgent());
+      update('agent', () => fresh); // not in sync yet: DataProvider polls until it is
+    } catch (err) {
+      setError(`Couldn't ${action} the agent: ${err.message}`);
+    } finally {
+      setActing(false);
     }
   }
 
@@ -33,16 +73,19 @@ function AgentControl() {
   if (status === 'loading') card = <div className="card"><Skeleton rows={3} /></div>;
   else if (status === 'error') card = <div className="card"><ErrorBox what="the agent status" onRetry={reload} /></div>;
   else {
-    const running = data.status === 'running';
+    const v = describeAgent(data);
+    const disabled = acting || v.busy;
     card = (
       <div className="card pipe agent-card">
         <div className="card-head">
           <div className="tile"><Icon name="bolt" /></div>
-          <div><div className="card-title">Marketing Agent</div><StatusBadge text={running ? 'Running' : 'Paused'} /></div>
+          <div><div className="card-title">Marketing Agent</div><StatusBadge text={v.badge} /></div>
         </div>
+        <AgentNote agent={data} note={v.note} />
         <div className="row">
-          <button className="btn primary" disabled={running} onClick={() => act('start')}><Icon name="play" /> Start</button>
-          <button className="btn outline" disabled={!running} onClick={() => act('pause')}><Icon name="pause" /> Pause</button>
+          {v.wantsRun
+            ? <button className="btn outline" disabled={disabled} onClick={() => act('stop')}><Icon name="pause" /> Stop</button>
+            : <button className="btn primary" disabled={disabled} onClick={() => act('start')}><Icon name="play" /> Start</button>}
         </div>
       </div>
     );

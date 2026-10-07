@@ -1,6 +1,6 @@
 'use client';
-// Admin page: create employee accounts with a password the admin chooses, set new passwords
-// and remove accounts from the dashboard (they stay in Supabase). Employees can change their password from Profile.
+// Admin page: create employee accounts with a password the admin chooses, set new passwords, make employees admins
+// (or back), and remove accounts from the dashboard (they stay in Supabase). Employees can change their password from Profile.
 import { useCallback, useEffect, useState } from 'react';
 import { CardHead, DataTable, Badge } from './ui';
 import { Icon } from './Icon';
@@ -17,6 +17,7 @@ export default function UsersView() {
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
   const [meId, setMeId] = useState(null);
   const [removing, setRemoving] = useState(null); // id of the user being removed
+  const [changingRole, setChangingRole] = useState(null); // id of the user whose role is being changed
   const [confirmDialog, confirm] = useConfirm();
   const [showPw, setShowPw] = useState(false);
 
@@ -77,6 +78,33 @@ export default function UsersView() {
     }
   }
 
+  async function onToggleAdmin(u) {
+    const promote = u.role !== 'admin';
+    const who = u.name || u.email;
+    const ok = await confirm({
+      title: promote ? `Make ${who} an admin?` : `Remove admin rights from ${who}?`,
+      message: promote
+        ? `${u.email} will be able to add, reset and remove users, and change their roles.`
+        : `${u.email} will become an employee and lose access to user management.`,
+      confirmLabel: promote ? 'Make admin' : 'Remove admin',
+      danger: !promote,
+    });
+    if (!ok) return;
+    setMsg({ text: '', tone: 'error' });
+    setChangingRole(u.id);
+    try {
+      const updated = await admin.setUserRole(u.id, promote ? 'admin' : 'employee');
+      setUsers((list) => list.map((x) => (x.id === u.id ? updated : x)));
+      // The server checks the role on every call, so it applies at once; the Users tab follows their session
+      // token, which refreshes within the hour (or on their next sign-in).
+      setMsg({ text: `${u.email} is now ${promote ? 'an admin' : 'an employee'}.`, tone: 'ok' });
+    } catch (err) {
+      setMsg({ text: err.message, tone: 'error' });
+    } finally {
+      setChangingRole(null);
+    }
+  }
+
   async function onRemove(u) {
     const ok = await confirm({
       title: `Remove ${u.name || 'this user'}?`,
@@ -118,6 +146,9 @@ export default function UsersView() {
       <td>
         {u.id === meId ? <span className="muted small">You</span> : (
           <div className="user-actions">
+            <button className="btn" type="button" disabled={changingRole === u.id} onClick={() => onToggleAdmin(u)}>
+              {changingRole === u.id ? 'Saving…' : u.role === 'admin' ? 'Remove admin' : 'Make admin'}
+            </button>
             <button className="btn" type="button" onClick={() => onReset(u)}>Reset password</button>
             <button className="btn danger" type="button" disabled={removing === u.id} onClick={() => onRemove(u)}>
               {removing === u.id ? 'Removing…' : 'Remove'}

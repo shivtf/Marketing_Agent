@@ -18,3 +18,9 @@ export const setUserPassword = (id, password) => authFetch(`/api/admin/users/${i
 
 // DELETE /api/admin/users/:id -> hides the account from the dashboard and blocks sign-in (kept in Supabase)
 export const removeUser = (id) => authFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+
+// PATCH /api/admin/users/:id  { role: 'admin' | 'employee' } -> promotes or demotes the user (not yourself)
+export const setUserRole = (id, role) => authFetch(`/api/admin/users/${id}`, {
+  method: 'PATCH',
+  body: JSON.stringify({ role }),
+});

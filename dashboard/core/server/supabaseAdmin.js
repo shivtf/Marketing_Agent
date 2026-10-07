@@ -18,7 +18,7 @@ export async function getCaller(request) {
   const token = /^Bearer (.+)$/i.exec(request.headers.get('authorization') || '')?.[1];
   if (!token) return { error: json('Not signed in.', 401) };
   const { data, error } = await adminClient().auth.getUser(token);
-  if (error || !data.user) return { error: json('Not signed in.', 401) };
+  if (error || !data.user || data.user.app_metadata?.removed) return { error: json('Not signed in.', 401) };
   return { user: data.user };
 }
 
@@ -31,6 +31,7 @@ export async function requireAdmin(request) {
 
 export const fail = json;
 
+export const ROLES = ['admin', 'employee'];
 
 export const summarize = (u) => ({
   id: u.id,

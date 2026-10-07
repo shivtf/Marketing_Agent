@@ -7,6 +7,7 @@ frontend only has to swap its mock bodies for apiFetch() calls. Every route requ
 
 import os
 import re
+import uuid
 from typing import Annotated, Any
 
 import asyncpg
@@ -104,7 +105,7 @@ def _plain(row: asyncpg.Record) -> dict:
     for key, val in dict(row).items():
         head, *rest = key.split("_")
         out[head + "".join(w.title() for w in rest)] = (
-            val.isoformat() if hasattr(val, "isoformat") else str(val) if hasattr(val, "hex") else val
+            val.isoformat() if hasattr(val, "isoformat") else str(val) if isinstance(val, uuid.UUID) else val
         )
     return out
 

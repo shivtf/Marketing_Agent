@@ -327,3 +327,4 @@ dialog.confirm::backdrop { background: rgba(20, 22, 43, .35); backdrop-filter: b
 @media (max-width: 760px) { .search-input { min-width: 0; flex: 1 1 100%; } }
 .agent-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .agent-card .card-head { margin-bottom: 0; }
+.agent-note { flex: 1; min-width: 200px; line-height: 1.5; }

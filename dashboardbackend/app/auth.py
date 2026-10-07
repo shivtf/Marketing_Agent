@@ -57,6 +57,10 @@ def current_user(creds: Annotated[HTTPAuthorizationCredentials | None, Depends(b
     if creds is None:
         raise _unauthorized("Missing bearer token")
     try:
-        return decode_token(creds.credentials)
+        claims = decode_token(creds.credentials)
     except jwt.PyJWTError as exc:
         raise _unauthorized("Invalid or expired token") from exc
+    # Removed accounts are banned (no refresh), but an already-issued token lives until it expires; refuse it now.
+    if (claims.get("app_metadata") or {}).get("removed"):
+        raise _unauthorized("Account removed")
+    return claims

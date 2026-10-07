@@ -1,21 +1,33 @@
-import { adminClient, requireAdmin, fail, summarize, handle } from '@/core/server/supabaseAdmin';
+import { adminClient, requireAdmin, fail, summarize, handle, ROLES } from '@/core/server/supabaseAdmin';
 
-// Set a new password for an employee (chosen by the admin). The employee can change it later from their profile.
+// Update an employee: { password } sets a new password chosen by the admin (they can change it later from their
+// profile); { role: 'admin' | 'employee' } promotes or demotes them. Admins can't change their own role,
+// so at least one admin always remains.
 export const PATCH = handle(async (request, { params }) => {
   const { user, error } = await requireAdmin(request);
   if (error) return error;
   const { id } = await params;
-  if (id === user.id) return fail('Change your own password from your profile.', 400);
   const body = await request.json().catch(() => ({}));
-  const password = String(body.password || '');
-  if (password.length < 8) return fail('Password must be at least 8 characters.', 400);
+  const changingRole = 'role' in body;
+
+  let update;
+  if (changingRole) {
+    if (id === user.id) return fail("You can't change your own role.", 400);
+    if (!ROLES.includes(body.role)) return fail('Unknown role.', 400);
+  } else {
+    if (id === user.id) return fail('Change your own password from your profile.', 400);
+    const password = String(body.password || '');
+    if (password.length < 8) return fail('Password must be at least 8 characters.', 400);
+    update = { password };
+  }
 
   const admin = adminClient();
   const { data: target, error: findErr } = await admin.auth.admin.getUserById(id);
-  if (findErr || !target.user) return fail('User not found.', 404);
+  if (findErr || !target.user || target.user.app_metadata?.removed) return fail('User not found.', 404);
+  if (changingRole) update = { app_metadata: { ...target.user.app_metadata, role: body.role } };
 
-  const { data, error: err } = await admin.auth.admin.updateUserById(id, { password });
-  if (err) return fail('Could not reset the password.', 500);
+  const { data, error: err } = await admin.auth.admin.updateUserById(id, update);
+  if (err) return fail(changingRole ? 'Could not change the role.' : 'Could not reset the password.', 500);
   return Response.json(summarize(data.user));
 });
 

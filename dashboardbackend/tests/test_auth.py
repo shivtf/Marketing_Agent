@@ -62,3 +62,7 @@ def test_bad_signature():
         algorithm="HS256",
     )
     assert _get(bad).status_code == 401
+
+
+def test_removed_user_is_rejected():
+    assert _get(_token(app_metadata={"role": "employee", "removed": True})).status_code == 401

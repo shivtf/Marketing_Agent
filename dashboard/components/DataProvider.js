@@ -15,6 +15,10 @@ const FETCHERS = {
   blogs: api.getBlogs,
   positive: api.getPositiveLeads,
 };
+// Agent status: poll every 3 s while a Start/Stop is being applied, otherwise every 10 s (pipeline-api.md).
+const OPTIONS = {
+  agent: { refetchInterval: (q) => (q.state.data && !q.state.data.inSync ? 3000 : 10000) },
+};
 const EMPTY = {
   agent: null, stats: null, leads: [], sent: [], replies: [], blogs: [],
   positive: { positive: [], review: [], questions: [], repliedLeads: 0 },
@@ -71,7 +75,7 @@ export function DataProvider({ children }) {
 
 // A section's data, loaded on first use. `key` may be null (nothing to load yet).
 export function useSection(key) {
-  const query = useQuery({ queryKey: ['section', key], queryFn: key ? FETCHERS[key] : skipToken });
+  const query = useQuery({ queryKey: ['section', key], queryFn: key ? FETCHERS[key] : skipToken, ...OPTIONS[key] });
   return toSection(query, key ? EMPTY[key] : []);
 }
 
