@@ -1,11 +1,12 @@
-// What the shared drawer shows for each kind of item. Each kind supplies:
-//   section  -> data section that backs Previous/Next (loaded while the drawer shows this kind)
-//   list(sectionData, leadsFilter, positiveView) -> items for Previous/Next, load(id) -> detail
+// What the shared drawer shows for each kind of item. Each kind supplies what backs Previous/Next, either
+//   paged    -> a paged list (useList): Previous/Next step through the page on screen, or
+//   section + list(sectionData, leadsFilter, positiveView) -> items for Previous/Next,
+// and load(id) -> detail
 //   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox? }
 import { Icon } from './Icon';
 import { Badge, StatusBadge, SourceCell, ExtLink, MetaRow } from './ui';
 import { pad, fmtDate, toneOf, REPLY_LABELS } from '@/core/format';
-import { visibleLeads, visiblePositive } from './DataProvider';
+import { visiblePositive } from './DataProvider';
 import * as api from '@/core/api';
 
 const ActionButton = ({ onClick, icon, children }) => (
@@ -14,9 +15,8 @@ const ActionButton = ({ onClick, icon, children }) => (
 
 export function getKinds(goto) {
   const lead = {
-    section: 'leads',
+    paged: 'leads',
     heading: 'Lead Details',
-    list: (leads, filter) => visibleLeads(leads, filter),
     load: api.getLead,
     describe: (d) => {
       const c = d.conversation;
@@ -49,6 +49,7 @@ export function getKinds(goto) {
   // and any review reason are shown.
   const fromPositivePage = (group) => ({
     ...lead,
+    paged: null,
     section: 'positive',
     list: (positive, _filter, view) => visiblePositive(positive[group], view),
     describe: (d) => {
@@ -72,9 +73,8 @@ export function getKinds(goto) {
   const questionLead = fromPositivePage('questions');
 
   const sent = {
-    section: 'sent',
+    paged: 'sent',
     heading: 'Email Details',
-    list: (sent) => sent,
     load: api.getSentEmail,
     describe: (d) => ({
       title: `Email #${pad(d.number)}`,
@@ -97,9 +97,8 @@ export function getKinds(goto) {
   };
 
   const reply = {
-    section: 'replies',
+    paged: 'replies',
     heading: 'Reply Details',
-    list: (replies) => replies,
     load: api.getReply,
     describe: (d) => {
       const o = d.originalEmail;
@@ -126,9 +125,8 @@ export function getKinds(goto) {
   };
 
   const blog = {
-    section: 'blogs',
+    paged: 'blogs',
     heading: 'Blog Details',
-    list: (blogs) => blogs,
     load: api.getBlog,
     describe: (d) => {
       const posted = d.status === 'Posted';

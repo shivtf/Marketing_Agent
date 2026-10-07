@@ -7,23 +7,29 @@ export const REPLY_LABELS = {
 
 export const pad = (n) => String(n).padStart(3, '0');
 
+// In the viewer's own time zone (the backend sends UTC).
 // mode: 'full' "Apr 20, 2024, 10:15 AM" | 'table' "Apr 20, 2024 10:15 AM" | 'date' "Apr 20, 2024"
 export function fmtDate(iso, mode = 'full') {
   if (!iso) return '—';
   const d = new Date(iso);
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   if (mode === 'date') return date;
-  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   return mode === 'table' ? `${date} ${time}` : `${date}, ${time}`;
 }
 
 // Whole days between an ISO time and now (0 = less than a day ago).
 export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0);
 
-export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'amber', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red' }[t] || 'gray');
+export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'gray', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red' }[t] || 'gray');
 
-export const SOURCES = {
-  linkedin: { label: 'LinkedIn', icon: 'linkedin', color: '#2f6fed' },
-  x: { label: 'X', icon: 'x', color: 'var(--src-x)' },
-  other: { label: 'Other', icon: 'other', color: '#b8bccb' },
+// Where the agent found a lead (backend /leads `source`): web search or one of its job-board feeds
+// (Marketing-AI-Agent config/sources.yaml).
+const SOURCE_LABELS = {
+  search: 'Web search', company_search: 'Company search', hn_hiring: 'HN Hiring', remoteok: 'RemoteOK',
+  remotive: 'Remotive', weworkremotely: 'We Work Remotely', arbeitnow: 'Arbeitnow', jobicy: 'Jobicy',
+  himalayas: 'Himalayas', themuse: 'The Muse', adzuna: 'Adzuna', jooble: 'Jooble', feed: 'RSS feed', other: 'Other',
 };
+// A source added to the agent later still reads well: 'new_board' -> 'New board'.
+export const sourceLabel = (key) => SOURCE_LABELS[key]
+  || (key ? key.replace(/[_:]+/g, ' ').trim().replace(/^./, (c) => c.toUpperCase()) : 'Other');

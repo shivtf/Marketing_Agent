@@ -1,3 +1,4 @@
+import secrets
 import time
 
 import jwt
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
+SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
 client = TestClient(app)
 
 

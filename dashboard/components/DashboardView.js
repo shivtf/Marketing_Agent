@@ -3,10 +3,10 @@
 import { useState } from 'react';
 import { Icon } from './Icon';
 import { OpenRow } from './OpenRow';
-import { useLeadsFilter, useSection, useUpdateSection, visibleLeads } from './DataProvider';
-import { StatusBadge, SourceCell, Skeleton, ErrorBox, CardHead, ViewCell, DataTable, StatCards } from './ui';
+import { useLeadsFilter, useList, useSection, useUpdateSection } from './DataProvider';
+import { Badge, StatusBadge, SourceCell, Skeleton, ErrorBox, CardHead, ViewCell, DataTable, StatCards, Pager } from './ui';
 import * as api from '@/core/api';
-import { pad, fmtDate, SOURCES } from '@/core/format';
+import { pad, fmtDate, sourceLabel } from '@/core/format';
 
 // ---------- Agent Control ----------
 // There is one marketing agent, on the office machine (approvals happen in Slack). Start/Stop are requests: the agent
@@ -38,16 +38,26 @@ function describeAgent(a) {
   return { badge: 'Stopped', wantsRun, note: 'Nothing is searched, drafted or sent until you press Start.' };
 }
 
+// Whether real emails go out: the most important fact on the card, so it gets a badge next to the state.
+function EmailModeBadge({ agent }) {
+  if (agent.sendingEnabled === false) return <Badge text="Sending off" tone="gray" title="Approved emails are not sent at all." />;
+  if (agent.testMode) return <Badge text="Test mode" tone="blue" title="Every email goes to the test inbox, not to the real contact." />;
+  if (agent.testMode === false) return <Badge text="Live emails" tone="red" title="Approved emails go to the real contacts." />;
+  return null;
+}
+
 function AgentNote({ agent, note }) {
   const last = agent.lastPass;
-  const lines = [
-    note,
+  const details = [
     last && `Last pass: ${OUTCOMES[last.outcome] || last.outcome} · ${fmtDate(last.finishedAt || last.startedAt, 'table')}`,
-    agent.requestedBy && `Last ${agent.desiredState === 'running' ? 'started' : 'stopped'} by ${agent.requestedBy}.`,
-    agent.sendingEnabled === false && 'Email sending is off.',
-    agent.testMode && 'Test mode: emails go to the test inbox.',
+    agent.requestedByName && `Last ${agent.desiredState === 'running' ? 'started' : 'stopped'} by ${agent.requestedByName}.`,
   ].filter(Boolean);
-  return <div className="muted small agent-note">{lines.map((l) => <div key={l}>{l}</div>)}</div>;
+  return (
+    <div className="small agent-note">
+      <div>{note}</div>
+      {details.map((l) => <div key={l} className="muted">{l}</div>)}
+    </div>
+  );
 }
 
 function AgentControl() {
@@ -79,7 +89,10 @@ function AgentControl() {
       <div className="card pipe agent-card">
         <div className="card-head">
           <div className="tile"><Icon name="bolt" /></div>
-          <div><div className="card-title">Marketing Agent</div><StatusBadge text={v.badge} /></div>
+          <div>
+            <div className="card-title">Marketing Agent</div>
+            <div className="badges"><StatusBadge text={v.badge} /><EmailModeBadge agent={data} /></div>
+          </div>
         </div>
         <AgentNote agent={data} note={v.note} />
         <div className="row">
@@ -112,34 +125,29 @@ function LeadStatCards({ stats }) {
   return <StatCards items={STATS.map((s) => ({ ...s, value: data?.[s.key], status, onRetry: reload }))} />;
 }
 
+// One bar per source the agent actually found leads on, most leads first; bar length = share of all leads.
+// A single colour: the label next to each bar says which source it is, so any number of sources fits.
 function SourceBreakdown({ stats }) {
   const { status, data, reload } = stats;
-  const keys = Object.keys(SOURCES);
   let body;
   if (status === 'loading') body = <Skeleton rows={3} />;
   else if (status === 'error') body = <ErrorBox what="lead sources" onRetry={reload} />;
   else {
-    const { bySource } = data;
-    body = (
-      <>
-        <div className="stack" role="img" aria-label={keys.map((k) => `${SOURCES[k].label} ${bySource[k]}`).join(', ')}>
-          {keys.map((k) => (
-            <span
-              key={k}
-              style={{ flexGrow: bySource[k], background: SOURCES[k].color }}
-              title={`${SOURCES[k].label}: ${bySource[k]}`}
-            />
-          ))}
-        </div>
-        <div className="legend">
-          {keys.map((k) => (
-            <div key={k} className="legend-item">
-              <Icon name={SOURCES[k].icon} />
-              <span className="legend-label">{SOURCES[k].label}</span><span className="legend-count">{bySource[k]}</span>
-            </div>
-          ))}
-        </div>
-      </>
+    const entries = Object.entries(data.bySource); // backend sends most leads first
+    const total = entries.reduce((sum, [, n]) => sum + n, 0);
+    body = !total ? <div className="muted small">No leads yet.</div> : (
+      <ul className="source-bars">
+        {entries.map(([k, n]) => {
+          const pct = Math.round((n / total) * 100);
+          return (
+            <li key={k} className="source-bar" title={`${sourceLabel(k)}: ${n} lead${n === 1 ? '' : 's'} (${pct}%)`}>
+              <span className="source-name">{sourceLabel(k)}</span>
+              <span className="source-track" aria-hidden="true"><span className="source-fill" style={{ width: `${(n / total) * 100}%` }} /></span>
+              <span className="source-count">{n}<span className="muted"> · {pct}%</span></span>
+            </li>
+          );
+        })}
+      </ul>
     );
   }
   return <div className="card"><CardHead icon="users" title="Leads by Source" />{body}</div>;
@@ -157,23 +165,30 @@ function Chip({ group, value, children }) {
   );
 }
 
-function LeadsTable() {
-  const { status, data, reload } = useSection('leads');
+// One page of leads; the status/source filters run on the server. Source chips come from the lead stats
+// (every source with leads, most first), since one page doesn't show them all.
+function LeadsTable({ stats }) {
+  const leads = useList('leads');
+  const { status, data, reload, fetching } = leads;
   const { filter } = useLeadsFilter();
-  const list = visibleLeads(data, filter);
+  const sources = Object.keys(stats.data?.bySource || {});
+  const filtering = filter.status !== 'all' || filter.source !== 'all';
   return (
     <div className="card">
-      {status === 'ready' && data.length > 0 && (
+      {status === 'ready' && (data.total > 0 || filtering) && (
         <div className="filters">
           <div className="chip-group">
             <Chip group="status" value="all">All</Chip>
             <Chip group="status" value="awaiting">Awaiting</Chip>
             <Chip group="status" value="responded">Responded</Chip>
           </div>
-          <div className="chip-group">
-            <Chip group="source" value="all">All sources</Chip>
-            {Object.entries(SOURCES).map(([k, v]) => <Chip key={k} group="source" value={k}>{v.label}</Chip>)}
-          </div>
+          {/* Only worth filtering when leads come from more than one source (or a filter is already on). */}
+          {(sources.length > 1 || filter.source !== 'all') && (
+            <div className="chip-group">
+              <Chip group="source" value="all">All sources</Chip>
+              {sources.map((k) => <Chip key={k} group="source" value={k}>{sourceLabel(k)}</Chip>)}
+            </div>
+          )}
         </div>
       )}
       <DataTable
@@ -183,7 +198,9 @@ function LeadsTable() {
             <th>#</th><th>Name</th><th>Source</th><th>Status</th><th>Date Added</th><th className="view">View</th>
           </>
         )}
-        rows={list.map((l) => (
+        busy={fetching}
+        scrollKey={data.page}
+        rows={data.items.map((l) => (
           <OpenRow key={l.id} kind="lead" id={l.id}>
             <td className="num">{pad(l.number)}</td>
             <td className="name">{l.name}</td>
@@ -194,10 +211,11 @@ function LeadsTable() {
           </OpenRow>
         ))}
         emptyIcon="users"
-        emptyText={data.length ? 'No leads match these filters' : 'No leads yet'}
+        emptyText={filtering ? 'No leads match these filters' : 'No leads yet'}
         what="leads"
         onRetry={reload}
       />
+      <Pager list={leads} />
     </div>
   );
 }
@@ -212,7 +230,7 @@ export default function DashboardView() {
         <div className="stack-v">
           <LeadStatCards stats={stats} />
           <div><SourceBreakdown stats={stats} /></div>
-          <div><LeadsTable /></div>
+          <div><LeadsTable stats={stats} /></div>
         </div>
       </section>
     </main>

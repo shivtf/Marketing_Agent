@@ -24,9 +24,9 @@ _LEADS = """
 select c.id, row_number() over (order by c.collected_at, c.id) as number,
        coalesce(c.name, c.email, co.name) as name, c.role as title, co.name as company,
        'https://' || co.domain as company_url, co.source_url as profile_url, c.email,
-       case when lower(coalesce(co.source, '')) like '%linkedin%' then 'linkedin'
-            when lower(coalesce(co.source, '')) ~ '(^|[^a-z])(x|twitter)([^a-z]|$)' then 'x'
-            else 'other' end as source,
+       -- Where the agent found the lead: 'leadgen:search' -> 'search', 'leadgen:feed:hn_hiring' -> 'hn_hiring'.
+       coalesce(nullif(regexp_replace(lower(coalesce(co.source, '')), '^(leadgen:)?(feed:)?', ''), ''), 'other')
+         as source,
        -- Out-of-office and bounce messages are automatic, so they don't count as a response.
        case when exists (select 1 from replies r where r.contact_id = c.id
                                             and coalesce(r.label, '') not in ('ooo', 'bounce'))
@@ -114,34 +114,57 @@ def _without(d: dict, *keys: str) -> dict:
     return {k: v for k, v in d.items() if k not in keys}
 
 
-Source = Annotated[str | None, Query(pattern="^(linkedin|x|other)$")]
+Source = Annotated[str | None, Query(pattern="^[a-z0-9_.:-]{1,40}$")]
 Status = Annotated[str | None, Query(pattern="^(awaiting|responded)$")]
+PageNo = Annotated[int, Query(ge=1)]
+Limit = Annotated[int, Query(ge=1, le=200)]
+PAGE_SIZE = 50
+
+
+async def _page(base: str, order: str, page: int, limit: int, where: str = "", args: tuple = ()) -> dict:
+    """One page of `base` (a select) -> { items, total, page, limit }. Filters go in SQL (`where`, args $1..$n),
+    so only the requested rows leave the database. `order` must end in a unique column for stable pages."""
+    sql = f"select * from ({base}) t {where}"  # noqa: S608 - base/where/order are constants, values are args
+    total = await _value(f"select count(*) from ({sql}) c", *args)  # noqa: S608
+    n = len(args)
+    items = await _rows(f"{sql} order by {order} limit ${n + 1} offset ${n + 2}", *args, limit, (page - 1) * limit)
+    return {"items": items, "total": total or 0, "page": page, "limit": limit}
 
 # ---------- Leads ----------
 
 
 @router.get("/leads")
-async def leads(status: Status = None, source: Source = None) -> list[dict]:
-    rows = await _rows(f"select * from ({_LEADS}) l order by number desc")  # noqa: S608
-    return [
-        _without(r, "title", "company", "companyUrl", "profileUrl", "email", "lastContactAt")
-        for r in rows
-        if (not status or r["status"].lower() == status) and (not source or r["source"] == source)
-    ]
+async def leads(
+    status: Status = None, source: Source = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
+) -> dict:
+    """Newest first, without contact details (those are in /leads/{id})."""
+    conds, args = [], []
+    if status:
+        args.append(status.title())  # 'awaiting' -> 'Awaiting'
+        conds.append(f"status = ${len(args)}")
+    if source:
+        args.append(source)
+        conds.append(f"source = ${len(args)}")
+    where = f"where {' and '.join(conds)}" if conds else ""
+    out = await _page(_LEADS, "number desc", page, limit, where, tuple(args))
+    hidden = ("title", "company", "companyUrl", "profileUrl", "email", "lastContactAt")
+    out["items"] = [_without(r, *hidden) for r in out["items"]]
+    return out
 
 
 @router.get("/leads/stats")
 async def lead_stats() -> dict:
-    rows = await _rows(f"select source, status from ({_LEADS}) l")  # noqa: S608
-    by_source = {"linkedin": 0, "x": 0, "other": 0}
+    rows = await _rows(f"select source, status, count(*) as n from ({_LEADS}) l group by 1, 2")  # noqa: S608
+    by_source: dict[str, int] = {}
     for r in rows:
-        by_source[r["source"]] += 1
-    awaiting = sum(r["status"] == "Awaiting" for r in rows)
+        by_source[r["source"]] = by_source.get(r["source"], 0) + r["n"]
+    total = sum(r["n"] for r in rows)
+    awaiting = sum(r["n"] for r in rows if r["status"] == "Awaiting")
     return {
-        "total": len(rows),
+        "total": total,
         "awaiting": awaiting,
-        "responded": len(rows) - awaiting,
-        "bySource": by_source,
+        "responded": total - awaiting,
+        "bySource": dict(sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))),  # most leads first
     }
 
 
@@ -267,8 +290,8 @@ async def lead(lead_id: str) -> dict:
 
 
 @router.get("/emails/sent")
-async def sent_emails() -> list[dict]:
-    return await _rows(f"select * from ({_SENT}) s order by sent_at desc")  # noqa: S608
+async def sent_emails(page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
+    return await _page(_SENT, "sent_at desc, id", page, limit)
 
 
 @router.get("/emails/sent/{email_id}")
@@ -282,9 +305,10 @@ async def sent_email(email_id: str) -> dict:
 
 
 @router.get("/emails/replies")
-async def replies() -> list[dict]:
-    rows = await _rows(f"select * from ({_REPLIES}) r order by received_at desc")  # noqa: S608
-    return [_without(r, "body") for r in rows]
+async def replies(page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
+    out = await _page(_REPLIES, "received_at desc, id", page, limit)
+    out["items"] = [_without(r, "body") for r in out["items"]]
+    return out
 
 
 @router.get("/emails/replies/{reply_id}")
@@ -308,9 +332,12 @@ async def reply(reply_id: str) -> dict:
 
 
 @router.get("/blogs")
-async def blogs() -> list[dict]:
-    rows = await _rows(f"select * from ({_BLOGS}) b order by number desc")  # noqa: S608
-    return [_without(r, "content") for r in rows]
+async def blogs(page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
+    """One page of posts (no content) plus `posted`: how many of all posts are published."""
+    out = await _page(_BLOGS, "number desc", page, limit)
+    out["items"] = [_without(r, "content") for r in out["items"]]
+    out["posted"] = await _value(f"select count(*) from ({_BLOGS}) b where status = 'Posted'") or 0  # noqa: S608
+    return out
 
 
 @router.get("/blogs/{blog_id}")

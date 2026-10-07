@@ -1,3 +1,4 @@
+import secrets
 import time
 
 import jwt
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 from app import data
 from app.main import app
 
-
+SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
 client = TestClient(app)
 
 
@@ -23,8 +24,9 @@ def _auth():
 
 
 LEADS = [
-    {"id": "a", "number": 2, "source": "x", "status": "Awaiting", "email": "p@q.co", "title": "CEO"},
-    {"id": "b", "number": 1, "source": "linkedin", "status": "Responded", "email": "r@s.co"},
+    {"id": "a", "number": 2, "source": "search", "status": "Awaiting", "email": "p@q.co", "title": "CEO"},
+    {"id": "b", "number": 1, "source": "hn_hiring", "status": "Responded", "email": "r@s.co"},
+    {"id": "c", "number": 3, "source": "hn_hiring", "status": "Awaiting", "email": "t@u.co"},
 ]
 
 
@@ -33,25 +35,70 @@ def test_data_routes_require_login():
     assert client.get("/blogs").status_code == 401
 
 
-def test_leads_filter_and_hide_details(monkeypatch):
-    async def rows(*_):
-        return [dict(r) for r in LEADS]
+@pytest.fixture
+def db(monkeypatch):
+    """Fake _rows/_value: records each (sql, args) and answers with `answer` (rows for _rows, a number for _value)."""
+    calls: list[tuple[str, tuple]] = []
+    answer = {"rows": [], "value": 0}
+
+    async def rows(sql, *args):
+        calls.append((sql, args))
+        return [dict(r) for r in answer["rows"]]
+
+    async def value(sql, *args):
+        calls.append((sql, args))
+        return answer["value"]
 
     monkeypatch.setattr(data, "_rows", rows)
-    res = client.get("/leads?status=awaiting", headers=_auth())
-    assert res.json() == [{"id": "a", "number": 2, "source": "x", "status": "Awaiting"}]
+    monkeypatch.setattr(data, "_value", value)
+    return calls, answer
+
+
+def test_leads_page_filters_in_sql_and_hides_details(db):
+    calls, answer = db
+    answer.update(rows=LEADS[:2], value=120)
+    res = client.get("/leads?status=awaiting&source=search&page=3&limit=20", headers=_auth()).json()
+    assert res["total"] == 120 and res["page"] == 3 and res["limit"] == 20
+    assert res["items"][0] == {"id": "a", "number": 2, "source": "search", "status": "Awaiting"}
+    count_sql, count_args = calls[0]
+    page_sql, page_args = calls[1]
+    assert "where status = $1 and source = $2" in count_sql and count_args == ("Awaiting", "search")
+    assert "limit $3 offset $4" in page_sql and page_args == ("Awaiting", "search", 20, 40)
+
+
+def test_leads_defaults_to_first_page_of_50(db):
+    calls, _ = db
+    res = client.get("/leads", headers=_auth()).json()
+    assert res == {"items": [], "total": 0, "page": 1, "limit": 50}
+    assert ") t where" not in calls[0][0] and calls[1][1] == (50, 0)
+
+
+def test_page_limits_are_checked(db):
+    assert client.get("/leads?page=0", headers=_auth()).status_code == 422
+    assert client.get("/emails/sent?limit=500", headers=_auth()).status_code == 422
+
+
+def test_blogs_page_counts_posted(db):
+    _, answer = db
+    answer.update(rows=[{"id": "p", "number": 1, "status": "Posted", "content": "long"}], value=7)
+    res = client.get("/blogs", headers=_auth()).json()
+    assert res["items"] == [{"id": "p", "number": 1, "status": "Posted"}] and res["posted"] == 7
 
 
 def test_lead_stats(monkeypatch):
     async def rows(*_):
-        return LEADS
+        return [
+            {"source": "hn_hiring", "status": "Awaiting", "n": 1},
+            {"source": "hn_hiring", "status": "Responded", "n": 1},
+            {"source": "search", "status": "Awaiting", "n": 1},
+        ]
 
     monkeypatch.setattr(data, "_rows", rows)
     assert client.get("/leads/stats", headers=_auth()).json() == {
-        "total": 2,
-        "awaiting": 1,
+        "total": 3,
+        "awaiting": 2,
         "responded": 1,
-        "bySource": {"linkedin": 1, "x": 1, "other": 0},
+        "bySource": {"hn_hiring": 2, "search": 1},
     }
 
 

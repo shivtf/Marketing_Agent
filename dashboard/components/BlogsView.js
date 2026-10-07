@@ -1,8 +1,8 @@
 'use client';
 // Page 3: Blogs (Blog Tracker).
 import { OpenRow } from './OpenRow';
-import { useSection } from './DataProvider';
-import { CardHead, StatusBadge, SiteCell, ViewCell, DataTable } from './ui';
+import { useList } from './DataProvider';
+import { CardHead, StatusBadge, SiteCell, ViewCell, DataTable, Pager } from './ui';
 import { pad } from '@/core/format';
 
 const StatBox = ({ label, value, color }) => (
@@ -13,9 +13,10 @@ const StatBox = ({ label, value, color }) => (
 );
 
 export default function BlogsView() {
-  const { status, data, reload } = useSection('blogs');
+  const list = useList('blogs');
+  const { status, data, reload, fetching } = list;
   const ready = status === 'ready';
-  const posted = data.filter((b) => b.status === 'Posted').length;
+  const posted = data.posted ?? 0; // across all posts, not just this page
   return (
     <main className="page">
       <div className="page-head"><h1 className="page-title">Blogs</h1><p className="muted">All blog topics and where they were posted.</p></div>
@@ -23,25 +24,27 @@ export default function BlogsView() {
         <div className="blog-top">
           <div>
             <CardHead icon="doc" title="Blog Tracker" />
-            {ready && <div className="total-block"><div className="muted small">Total Blogs</div><div className="big">{data.length}</div></div>}
+            {ready && <div className="total-block"><div className="muted small">Total Blogs</div><div className="big">{data.total}</div></div>}
           </div>
           {ready && (
             <div className="stats">
               <StatBox label="Posted" value={posted} color="var(--green)" />
-              <StatBox label="Not Posted" value={data.length - posted} color="var(--amber)" />
+              <StatBox label="Not Posted" value={data.total - posted} color="var(--amber)" />
             </div>
           )}
         </div>
         <DataTable
           status={status} emptyIcon="doc" emptyText="No blogs yet" what="blogs" onRetry={reload}
           head={<><th>#</th><th>Blog Topic/Title</th><th>Status</th><th>Posted On</th><th className="view">View</th></>}
-          rows={data.map((b) => (
+          busy={fetching} scrollKey={data.page}
+          rows={data.items.map((b) => (
             <OpenRow key={b.id} kind="blog" id={b.id}>
               <td className="num">{pad(b.number)}</td><td className="name"><div className="ellip wide">{b.title}</div></td>
               <td><StatusBadge text={b.status} /></td><td><SiteCell site={b.site} /></td><ViewCell />
             </OpenRow>
           ))}
         />
+        <Pager list={list} />
       </div>
     </main>
   );

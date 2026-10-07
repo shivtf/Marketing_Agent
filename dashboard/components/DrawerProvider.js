@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { Skeleton, ErrorBox } from './ui';
 import { FormattedContent } from './FormattedContent';
-import { toSection, useLeadsFilter, useSection } from './DataProvider';
+import { toSection, useLeadsFilter, useList, useSection } from './DataProvider';
 import { getKinds } from './drawerKinds';
 
 const DrawerCtx = createContext(null);
@@ -60,8 +60,9 @@ export function DrawerProvider({ children }) {
   });
   const detail = toSection(detailQuery, null);
   const section = useSection(k?.section ?? null);
+  const paged = useList(k?.paged ?? null);
 
-  const items = k ? k.list(section.data, filter, positiveView) : [];
+  const items = !k ? [] : k.paged ? paged.data.items : k.list(section.data, filter, positiveView);
   const index = items.findIndex((x) => x.id === s.id);
 
   const step = (delta) => {

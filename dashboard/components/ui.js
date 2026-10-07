@@ -1,13 +1,11 @@
 // Small presentational pieces shared by every page and the drawer.
 import { Icon } from './Icon';
-import { SOURCES, toneOf } from '@/core/format';
+import { sourceLabel, toneOf } from '@/core/format';
 
-export const Badge = ({ text, tone }) => <span className={`badge ${tone}`}>{text}</span>;
+export const Badge = ({ text, tone, title }) => <span className={`badge ${tone}`} title={title}>{text}</span>;
 export const StatusBadge = ({ text }) => <Badge text={text} tone={toneOf(text)} />;
 
-export const SourceCell = ({ source }) => (
-  <span className="src"><Icon name={SOURCES[source].icon} />{SOURCES[source].label}</span>
-);
+export const SourceCell = ({ source }) => <span className="src">{sourceLabel(source)}</span>;
 
 export const SiteCell = ({ site }) => (
   site ? <span className="src"><Icon name={site} />{site}</span> : <span className="muted">—</span>
@@ -67,17 +65,42 @@ export function StatCards({ items }) {
   );
 }
 
-// Table for a loadable section: skeleton / error / empty / table.
-export function DataTable({ status, head, rows, emptyIcon, emptyText, what, onRetry }) {
+// Table for a loadable section: skeleton / error / empty / table. `busy` dims it while another page loads;
+// a new `scrollKey` (e.g. the page number) starts the table scrolled to the top.
+export function DataTable({ status, head, rows, emptyIcon, emptyText, what, onRetry, busy, scrollKey }) {
   if (status === 'loading') return <Skeleton />;
   if (status === 'error') return <ErrorBox what={what} onRetry={onRetry} />;
   if (!rows.length) return <EmptyBox icon={emptyIcon}>{emptyText}</EmptyBox>;
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap${busy ? ' busy' : ''}`} key={scrollKey} aria-busy={busy || undefined}>
       <table>
         <thead><tr>{head}</tr></thead>
         <tbody>{rows}</tbody>
       </table>
     </div>
+  );
+}
+
+// Previous / Next under a paged table: "51–100 of 248". Hidden when everything fits on one page.
+export function Pager({ list }) {
+  const { data, fetching, setPage, status } = list;
+  const { total, page, limit } = data;
+  if (status !== 'ready' || total <= limit) return null;
+  const pages = Math.ceil(total / limit);
+  const from = (page - 1) * limit + 1;
+  const to = Math.min(page * limit, total);
+  return (
+    <nav className="pager" aria-label="Pages">
+      <span className="muted small">{from}–{to} of {total}</span>
+      <div className="row">
+        <button className="btn" type="button" disabled={page <= 1 || fetching} onClick={() => setPage(page - 1)}>
+          <Icon name="chevL" /> Previous
+        </button>
+        <span className="pager-page small">Page {page} of {pages}</span>
+        <button className="btn" type="button" disabled={page >= pages || fetching} onClick={() => setPage(page + 1)}>
+          Next <Icon name="chevR" />
+        </button>
+      </div>
+    </nav>
   );
 }

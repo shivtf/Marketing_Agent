@@ -13,6 +13,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import current_user
+from app.data import _pg
 
 router = APIRouter(prefix="/agent")
 User = Annotated[dict, Depends(current_user)]
@@ -60,21 +61,44 @@ async def _call(method: str, path: str, body: dict | None = None) -> dict:
     return _camel(res.json())
 
 
+async def _requested_by_name(requested_by: str | None) -> str | None:
+    """'dashboard:priya@x.co' -> the person's name from Supabase Auth; falls back to the email (or the raw value
+    for requests made outside the dashboard, e.g. from the agent's CLI)."""
+    if not requested_by:
+        return None
+    who = requested_by.removeprefix("dashboard:")
+    if "@" not in who:
+        return who
+    try:
+        name = await (await _pg()).fetchval(
+            "select raw_user_meta_data->>'name' from auth.users where lower(email) = lower($1)", who
+        )
+    except Exception:  # noqa: BLE001 - a missing name must never break the status card
+        name = None
+    return (name or "").strip() or who
+
+
+async def _with_name(status: dict) -> dict:
+    status["requestedByName"] = await _requested_by_name(status.get("requestedBy"))
+    return status
+
+
 def _requested_by(user: dict) -> dict:
     return {"requested_by": (user.get("email") or user["sub"])[:100]}
 
 
-# -> { desiredState, state: 'running' | 'stopped' | 'offline', online, inSync, currentPass, nextPassAt, lastPass, ... }
+# -> { desiredState, state: 'running' | 'stopped' | 'offline', online, inSync, currentPass, nextPassAt, lastPass,
+#      requestedBy, requestedByName, ... }
 @router.get("")
 async def agent_status(_user: User) -> dict:
-    return await _call("GET", "status")
+    return await _with_name(await _call("GET", "status"))
 
 
 @router.post("/start")
 async def start(user: User) -> dict:
-    return await _call("POST", "start", _requested_by(user))
+    return await _with_name(await _call("POST", "start", _requested_by(user)))
 
 
 @router.post("/stop")
 async def stop(user: User) -> dict:
-    return await _call("POST", "stop", _requested_by(user))
+    return await _with_name(await _call("POST", "stop", _requested_by(user)))

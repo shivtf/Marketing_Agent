@@ -44,9 +44,11 @@ export const getAgent = () => apiFetch('/agent');
 export const startAgent = () => apiFetch('/agent/start', { method: 'POST' });
 export const stopAgent = () => apiFetch('/agent/stop', { method: 'POST' });
 
+// List routes are paged: -> { items, total, page, limit } (blogs also carry `posted`). Filters run on the server.
+
 // ---------- Leads ----------
 
-export const getLeads = ({ status, source } = {}) => apiFetch(`/leads${qs({ status, source })}`);
+export const getLeads = ({ status, source, page, limit } = {}) => apiFetch(`/leads${qs({ status, source, page, limit })}`);
 export const getLeadStats = () => apiFetch('/leads/stats');
 export const getLead = (id) => apiFetch(`/leads/${encodeURIComponent(id)}`);
 // -> { positive, review, questions, repliedLeads, pending }: leads judged on their latest human reply.
@@ -60,12 +62,12 @@ export async function getPositiveLeads() {
 
 // ---------- Emails ----------
 
-export const getSentEmails = () => apiFetch('/emails/sent');
+export const getSentEmails = ({ page, limit } = {}) => apiFetch(`/emails/sent${qs({ page, limit })}`);
 export const getSentEmail = (id) => apiFetch(`/emails/sent/${encodeURIComponent(id)}`);
-export const getReplies = () => apiFetch('/emails/replies');
+export const getReplies = ({ page, limit } = {}) => apiFetch(`/emails/replies${qs({ page, limit })}`);
 export const getReply = (id) => apiFetch(`/emails/replies/${encodeURIComponent(id)}`);
 
 // ---------- Blogs ----------
 
-export const getBlogs = () => apiFetch('/blogs');
+export const getBlogs = ({ page, limit } = {}) => apiFetch(`/blogs${qs({ page, limit })}`);
 export const getBlog = (id) => apiFetch(`/blogs/${encodeURIComponent(id)}`);

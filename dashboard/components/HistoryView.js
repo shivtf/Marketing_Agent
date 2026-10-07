@@ -1,19 +1,20 @@
 'use client';
 // Page 2: History (emails sent + replies received).
 import { OpenRow } from './OpenRow';
-import { useSection } from './DataProvider';
-import { CardHead, ViewCell, DataTable } from './ui';
+import { useList } from './DataProvider';
+import { CardHead, ViewCell, DataTable, Pager } from './ui';
 import { pad, fmtDate } from '@/core/format';
 
 function HistoryCard({ section, icon, title, totalLabel, kind, emptyText, head, row }) {
-  const { status, data, reload } = useSection(section);
+  const list = useList(section);
+  const { status, data, reload, fetching } = list;
   return (
     <div className="card">
       <CardHead icon={icon} title={title} />
       {status === 'ready' && (
         <div className="total-block">
           <div className="muted small">{totalLabel}</div>
-          <div className="big">{data.length}</div>
+          <div className="big">{data.total}</div>
         </div>
       )}
       <DataTable
@@ -23,8 +24,11 @@ function HistoryCard({ section, icon, title, totalLabel, kind, emptyText, head, 
         emptyText={emptyText}
         what={title.toLowerCase()}
         onRetry={reload}
-        rows={data.map((x) => <OpenRow key={x.id} kind={kind} id={x.id}>{row(x)}</OpenRow>)}
+        busy={fetching}
+        scrollKey={data.page}
+        rows={data.items.map((x) => <OpenRow key={x.id} kind={kind} id={x.id}>{row(x)}</OpenRow>)}
       />
+      <Pager list={list} />
     </div>
   );
 }
