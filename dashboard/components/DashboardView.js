@@ -46,12 +46,24 @@ function EmailModeBadge({ agent }) {
   return null;
 }
 
+// When the agent started/stopped (stateSince), who pressed the button and when (requestedAt), and the last run.
+// A run's own times are not the stop time: stopping mid-run ends a run that may have started long before.
 function AgentNote({ agent, note }) {
   const last = agent.lastPass;
-  const details = [
-    last && `Last pass: ${OUTCOMES[last.outcome] || last.outcome} · ${fmtDate(last.finishedAt || last.startedAt, 'table')}`,
-    agent.requestedByName && `Last ${agent.desiredState === 'running' ? 'started' : 'stopped'} by ${agent.requestedByName}.`,
-  ].filter(Boolean);
+  const running = agent.desiredState === 'running';
+  const since = agent.inSync && agent.stateSince
+    && (agent.state === 'running' ? `Running since ${fmtDate(agent.stateSince, 'table')}`
+      : agent.state === 'stopped' ? `Stopped at ${fmtDate(agent.stateSince, 'table')}` : null);
+  // Who pressed the button: their name (agent.py looks it up), else what the API recorded ("dashboard:<email>",
+  // or a name when started/stopped from the agent's CLI).
+  const who = agent.requestedByName || agent.requestedBy?.replace(/^dashboard:/, '');
+  const by = who && [
+    `${running ? 'Started' : 'Stopped'} by ${who}`,
+    agent.requestedAt && fmtDate(agent.requestedAt, 'table'),
+  ].filter(Boolean).join(' · ');
+  const run = last && `Last run: ${OUTCOMES[last.outcome] || last.outcome} · ${
+    last.finishedAt ? `ended ${fmtDate(last.finishedAt, 'table')}` : `started ${fmtDate(last.startedAt, 'table')}`}`;
+  const details = [since, by, run].filter(Boolean);
   return (
     <div className="small agent-note">
       <div>{note}</div>

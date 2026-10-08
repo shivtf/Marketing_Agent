@@ -10,9 +10,12 @@ export const pad = (n) => String(n).padStart(3, '0');
 
 // In the viewer's own time zone (the backend sends UTC).
 // mode: 'full' "Apr 20, 2024, 10:15 AM" | 'table' "Apr 20, 2024 10:15 AM" | 'date' "Apr 20, 2024"
+// A time with no zone ("2026-10-07T05:12:38") is UTC like every time the backend sends; without the "Z" the
+// browser would read it as local time.
+const HAS_ZONE = /(Z|[+-]\d{2}:?\d{2})$/i;
 export function fmtDate(iso, mode = 'full') {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = new Date(typeof iso === 'string' && iso.includes('T') && !HAS_ZONE.test(iso) ? `${iso}Z` : iso);
   const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   if (mode === 'date') return date;
   const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
