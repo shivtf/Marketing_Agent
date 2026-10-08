@@ -27,6 +27,7 @@ export function getKinds(goto) {
           <MetaRow key="name" k="Name">{d.name}</MetaRow>,
           <MetaRow key="title" k="Job Title">{d.title}</MetaRow>,
           <MetaRow key="co" k="Company"><ExtLink href={d.companyUrl}>{d.company}</ExtLink></MetaRow>,
+          <MetaRow key="about" k="What they do">{d.about || '—'}</MetaRow>,
           <MetaRow key="src" k="Source">
             <SourceCell source={d.source} />
             <div className="profile-link"><ExtLink href={d.profileUrl}>View profile</ExtLink></div>

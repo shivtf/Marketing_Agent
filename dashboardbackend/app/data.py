@@ -24,6 +24,8 @@ _LEADS = """
 select c.id, row_number() over (order by c.collected_at, c.id) as number,
        coalesce(c.name, c.email, co.name) as name, c.role as title, co.name as company,
        'https://' || co.domain as company_url, co.source_url as profile_url, c.email,
+       -- What the company does: the agent's project summary for it, else its industry.
+       coalesce(nullif(btrim(co.project_summary), ''), nullif(btrim(co.industry), '')) as about,
        -- Where the agent found the lead: 'leadgen:search' -> 'search', 'leadgen:feed:hn_hiring' -> 'hn_hiring'.
        coalesce(nullif(regexp_replace(lower(coalesce(co.source, '')), '^(leadgen:)?(feed:)?', ''), ''), 'other')
          as source,
@@ -160,7 +162,7 @@ async def _page(base: str, order: str, page: int, limit: int, where: str = "", a
 async def leads(
     status: Status = None, source: Source = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
 ) -> dict:
-    """Newest first, with the company but without contact details (those are in /leads/{id})."""
+    """Newest first: company, email and what the company does; other contact details are in /leads/{id}."""
     conds, args = [], []
     if status:
         args.append(_STATUS[status])
@@ -170,7 +172,7 @@ async def leads(
         conds.append(f"source = ${len(args)}")
     where = f"where {' and '.join(conds)}" if conds else ""
     out = await _page(_LEADS, "number desc", page, limit, where, tuple(args))
-    hidden = ("title", "companyUrl", "profileUrl", "email", "lastContactAt")
+    hidden = ("title", "companyUrl", "profileUrl", "lastContactAt")
     out["items"] = [_without(r, *hidden) for r in out["items"]]
     return out
 

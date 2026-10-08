@@ -161,8 +161,8 @@ function ReplyBadge({ reply }) {
   return <Badge text={label} tone={toneOf(label)} />;
 }
 
-// Every lead, newest first, one page at a time. A lead is shown by its company (the person's name when the
-// agent didn't record one).
+// Every lead, newest first, one page at a time: the company, the email we found, what the company does and when
+// the lead came in.
 function LeadsTable() {
   const leads = useList('leads');
   const { status, data, reload, fetching } = leads;
@@ -172,7 +172,8 @@ function LeadsTable() {
         status={status}
         head={(
           <>
-            <th>#</th><th>Name</th><th>Source</th><th>Status</th><th>Reply</th><th>Date Added</th><th className="view">View</th>
+            <th>#</th><th>Company</th><th>Email</th><th>What they do</th><th>Source</th><th>Status</th><th>Reply</th>
+            <th>Added</th><th className="view">View</th>
           </>
         )}
         busy={fetching}
@@ -180,11 +181,13 @@ function LeadsTable() {
         rows={data.items.map((l) => (
           <OpenRow key={l.id} kind="lead" id={l.id}>
             <td className="num">{pad(l.number)}</td>
-            <td className="name">{l.company || l.name}</td>
+            <td className="name">{l.company || 'Unknown company'}</td>
+            <td className="muted">{l.email || '—'}</td>
+            <td className="about" title={l.about || undefined}>{l.about || <span className="muted">—</span>}</td>
             <td><SourceCell source={l.source} /></td>
             <td><StatusBadge text={l.status} /></td>
             <td><ReplyBadge reply={l.reply} /></td>
-            <td className="muted">{fmtDate(l.addedAt, 'date')}</td>
+            <td className="muted nowrap">{fmtDate(l.addedAt, 'table')}</td>
             <ViewCell />
           </OpenRow>
         ))}

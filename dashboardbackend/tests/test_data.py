@@ -60,7 +60,9 @@ def test_leads_page_filters_in_sql_and_hides_details(db):
     answer.update(rows=LEADS[:2], value=120)
     res = client.get("/leads?status=sent&source=search&page=3&limit=20", headers=_auth()).json()
     assert res["total"] == 120 and res["page"] == 3 and res["limit"] == 20
-    assert res["items"][0] == {"id": "a", "number": 2, "source": "search", "status": "Sent", "company": "Acme"}
+    assert res["items"][0] == {
+        "id": "a", "number": 2, "source": "search", "status": "Sent", "company": "Acme", "email": "p@q.co"
+    }
     count_sql, count_args = calls[0]
     page_sql, page_args = calls[1]
     assert "where status = $1 and source = $2" in count_sql and count_args == ("Sent", "search")
