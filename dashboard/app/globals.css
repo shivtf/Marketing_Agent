@@ -168,6 +168,14 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
 .source-fill { display: block; height: 100%; min-width: 4px; border-radius: 4px; background: var(--accent); transition: width .5s ease; }
 .source-count { min-width: 72px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 .source-count .muted { font-weight: 400; }
+.bar-button { width: calc(100% + 12px); margin: -4px -6px; padding: 4px 6px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background .15s; }
+.bar-button:hover { background: var(--row-hover); }
+.bar-button.active { background: var(--accent-soft); }
+.bar-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.source-fill.green { background: var(--green); }
+.source-fill.red { background: var(--red); }
+.source-fill.amber { background: var(--amber); }
+.source-fill.gray { background: var(--gray); }
 .src { display: inline-flex; align-items: center; gap: 8px; vertical-align: middle; }
 td.view svg { display: block; margin-left: auto; }
 .src svg { color: var(--muted); }

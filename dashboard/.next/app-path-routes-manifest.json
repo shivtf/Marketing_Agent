@@ -6,9 +6,9 @@
   "/page": "/",
   "/login/page": "/login",
   "/(app)/positive-leads/page": "/positive-leads",
-  "/(app)/history/page": "/history",
-  "/(app)/dashboard/page": "/dashboard",
+  "/(app)/profile/page": "/profile",
   "/(app)/blogs/page": "/blogs",
+  "/(app)/history/page": "/history",
   "/(app)/users/page": "/users",
-  "/(app)/profile/page": "/profile"
+  "/(app)/dashboard/page": "/dashboard"
 }

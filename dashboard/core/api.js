@@ -48,7 +48,8 @@ export const stopAgent = () => apiFetch('/agent/stop', { method: 'POST' });
 
 // ---------- Leads ----------
 
-export const getLeads = ({ status, source, page, limit } = {}) => apiFetch(`/leads${qs({ status, source, page, limit })}`);
+export const getLeads = ({ status, source, reply, q, page, limit } = {}) =>
+  apiFetch(`/leads${qs({ status, source, reply, q, page, limit })}`);
 export const getLeadStats = () => apiFetch('/leads/stats');
 export const getLead = (id) => apiFetch(`/leads/${encodeURIComponent(id)}`);
 // -> { positive, review, questions, repliedLeads, pending }: leads judged on their latest human reply.

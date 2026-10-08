@@ -5,6 +5,12 @@ export const REPLY_LABELS = {
   ooo: 'Out of office', bounce: 'Bounced', unsubscribe: 'Unsubscribed',
 };
 
+// A lead's reply outcome (backend /leads `reply`), in the order the dashboard lists them.
+export const LEAD_REPLY_LABELS = {
+  interested: 'Interested', question: 'Question', not_interested: 'Not interested', unsubscribe: 'Unsubscribed',
+  bounce: 'Bounced', ooo: 'Out of office', unclassified: 'Not classified', none: 'No reply',
+};
+
 export const pad = (n) => String(n).padStart(3, '0');
 
 // In the viewer's own time zone (the backend sends UTC).
@@ -21,7 +27,7 @@ export function fmtDate(iso, mode = 'full') {
 // Whole days between an ISO time and now (0 = less than a day ago).
 export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0);
 
-export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'gray', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red' }[t] || 'gray');
+export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'gray', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red', Bounced: 'red' }[t] || 'gray');
 
 // Where the agent found a lead (backend /leads `source`): web search or one of its job-board feeds
 // (Marketing-AI-Agent config/sources.yaml).

@@ -22,6 +22,8 @@ const LISTS = {
     page, limit: PAGE_SIZE,
     status: filter.status === 'all' ? undefined : filter.status,
     source: filter.source === 'all' ? undefined : filter.source,
+    reply: filter.reply === 'all' ? undefined : filter.reply,
+    q: filter.q.trim() || undefined,
   }),
   sent: (page) => api.getSentEmails({ page, limit: PAGE_SIZE }),
   replies: (page) => api.getReplies({ page, limit: PAGE_SIZE }),
@@ -73,7 +75,7 @@ export function DataProvider({ children }) {
   const [client] = useState(() => new QueryClient({
     defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
   }));
-  const [filter, setLeadsFilter] = useState({ status: 'all', source: 'all' });
+  const [filter, setLeadsFilter] = useState({ status: 'all', source: 'all', reply: 'all', q: '' });
   const [pages, setPages] = useState({ leads: 1, sent: 1, replies: 1, blogs: 1 });
   const [positiveView, setPositiveView] = useState({ q: '', sort: 'followup' });
   // A new lead filter starts again from page 1 (the old page may not exist in the filtered list).
