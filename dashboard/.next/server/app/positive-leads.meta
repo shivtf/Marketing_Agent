@@ -1,0 +1,15 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(app)/layout,_N_T_/(app)/positive-leads/layout,_N_T_/(app)/positive-leads/page,_N_T_/positive-leads"
+  },
+  "routeCache": {
+    "key": "/route-cache/APP_PAGE/9fa7f56982d7ba05507be1b0cda52e8a3b88c25785389b3b5e8e1ecb877fb542/$/positive-leads",
+    "owner": {
+      "kind": "APP_PAGE",
+      "sourceRoute": "/(app)/positive-leads/page"
+    },
+    "isFallback": false
+  }
+}
