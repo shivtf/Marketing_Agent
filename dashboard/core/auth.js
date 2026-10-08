@@ -14,9 +14,6 @@ export const isAdmin = (session) => session?.user?.app_metadata?.role === 'admin
 export async function signIn(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw new Error('Invalid email or password.');
-  // One sign-in per account: end its sessions on other devices. Their tokens stop working at the backend's next
-  // check (it looks the session up), and those browsers return to the login page.
-  await supabase.auth.signOut({ scope: 'others' }).catch(() => {});
   return data.session;
 }
 
@@ -24,12 +21,13 @@ export async function signOut() {
   await supabase.auth.signOut();
 }
 
-// The backend rejected this browser's token: forget the session here only (the account may be signed in elsewhere)
-// and go to the login page, saying why when another sign-in ended this one.
-export const ELSEWHERE = 'Signed in on another device';
-export async function endSession(reason) {
+// The backend rejected this browser's session: end it here only (a global sign-out would also end the session of
+// whoever is using the account on another device), then go to the login page, saying why when the account is in
+// use elsewhere. `redirect: false` stays on the current page (the login form shows the reason itself).
+export const IN_USE = 'This account is already signed in on another device.';
+export async function endSession(reason, { redirect = true } = {}) {
   await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
-  window.location.assign(reason === ELSEWHERE ? '/login?ended=elsewhere' : '/login');
+  if (redirect) window.location.assign(reason === IN_USE ? '/login?ended=elsewhere' : '/login');
 }
 
 // Authenticated call to this app's own /api routes; throws Error with the server's message.

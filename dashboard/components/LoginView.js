@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon } from './Icon';
 import * as auth from '@/core/auth';
+import { getMe } from '@/core/api';
 
 export default function LoginView() {
   const router = useRouter();
@@ -23,7 +24,7 @@ export default function LoginView() {
       document.body.classList.add('auth-view');
       emailRef.current?.focus();
       if (new URLSearchParams(window.location.search).get('ended') === 'elsewhere') {
-        setMsg({ text: 'You were signed out because this account signed in on another device.', tone: 'error' });
+        setMsg({ text: 'You were signed out because this account is now in use on another device.', tone: 'error' });
       }
     }
   });
@@ -38,6 +39,16 @@ export default function LoginView() {
     const email = emailRef.current.value.trim();
     try {
       await auth.signIn(email, passwordRef.current.value);
+      // One sign-in per account: the backend refuses (409) while the account is in use on another device.
+      try {
+        await getMe({ keepSession: true });
+      } catch (err) {
+        if (err.status === 409 || err.status === 401) {
+          await auth.endSession(err.message, { redirect: false });
+          throw err;
+        }
+        // Backend unreachable: carry on; the app shows its "can't reach the server" screen.
+      }
       router.replace('/dashboard');
       return;
     } catch (err) {

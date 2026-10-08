@@ -8,7 +8,7 @@ import { ErrorBox, Skeleton } from './ui';
 import { DataProvider } from './DataProvider';
 import { DrawerProvider } from './DrawerProvider';
 import * as auth from '@/core/auth';
-import { getMe } from '@/core/api';
+import { getMe, releaseAccount } from '@/core/api';
 
 const TABS = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -34,6 +34,7 @@ function Topbar({ admin }) {
   };
 
   const signOut = async () => {
+    await releaseAccount().catch(() => {}); // signing out works even when the backend can't be reached
     await auth.signOut();
     router.replace('/login');
   };
@@ -77,13 +78,21 @@ export function AppShell({ children }) {
       } catch (err) {
         if (cancelled) return;
         if (err.status === 0) { setState('offline'); return; }
-        // Backend rejected the token: forget it in this browser only (a global sign-out would also end the
-        // account's newer session on another device).
+        // Backend rejected the session: end it in this browser only (a global sign-out would also end the
+        // session of whoever is using the account on another device).
         await auth.endSession(err.message);
       }
     })().catch(() => { if (!cancelled) router.replace('/login'); });
     return () => { cancelled = true; };
   }, [router, attempt]);
+
+  // Check in every minute while the app is open, so this session keeps the account (one sign-in per account).
+  // getMe returns to the login page if the session has ended or the account was taken over.
+  useEffect(() => {
+    if (state !== 'ready') return undefined;
+    const t = setInterval(() => { getMe().catch(() => {}); }, 60_000);
+    return () => clearInterval(t);
+  }, [state]);
 
   if (state === 'offline') {
     return (

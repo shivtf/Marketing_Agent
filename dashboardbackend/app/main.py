@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent import router as agent_router
-from app.auth import current_user
+from app.auth import current_user, release
 from app.data import router as data_router
 
 load_dotenv()  # reads eval/dashboardbackend/.env when started from that folder
@@ -38,3 +38,11 @@ def health() -> dict:
 @app.get("/auth/me")
 def me(user: Annotated[dict, Depends(current_user)]) -> dict:
     return {"id": user["sub"], "email": user.get("email"), "role": user.get("role")}
+
+
+@app.post("/auth/signout")
+async def signout(user: Annotated[dict, Depends(current_user)]) -> dict:
+    """Frees the account for another sign-in right away (the browser then ends its Supabase session)."""
+    if user.get("session_id"):
+        await release(user["sub"], user["session_id"])
+    return {"ok": True}

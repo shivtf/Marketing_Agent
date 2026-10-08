@@ -73,16 +73,27 @@ SESSION = "7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d"
 
 
 @pytest.fixture
-def sessions(monkeypatch):
-    """Fake auth.sessions lookup: `alive` says whether the token's session still exists."""
+def presence(monkeypatch):
+    """Fake database for the one-sign-in check: `alive` = the token's Supabase session exists, `holder` = the
+    session currently using the account (None = free), `fail` = the database can't be reached."""
     from app import data
 
-    state = {"alive": True, "fail": False}
+    state = {"alive": True, "holder": None, "fail": False, "released": []}
 
     class Pool:
-        async def fetchval(self, _sql, session_id):
-            assert session_id == SESSION
-            return 1 if state["alive"] else None
+        async def fetchval(self, sql, *args):
+            if "auth.sessions where id" in sql:
+                return 1 if state["alive"] else None
+            user_id, session_id = args
+            if state["holder"] in (None, session_id):
+                state["holder"] = session_id
+                return session_id
+            return None
+
+        async def execute(self, _sql, user_id, session_id):
+            state["released"].append(session_id)
+            if state["holder"] == session_id:
+                state["holder"] = None
 
     async def pg():
         if state["fail"]:
@@ -93,16 +104,29 @@ def sessions(monkeypatch):
     return state
 
 
-def test_token_from_current_session_is_accepted(sessions):
+def test_first_session_takes_the_account(presence):
     assert _get(_token(session_id=SESSION)).status_code == 200
+    assert presence["holder"] == SESSION
 
 
-def test_token_from_ended_session_is_rejected(sessions):
-    sessions["alive"] = False
+def test_second_session_is_refused_while_account_in_use(presence):
+    presence["holder"] = "11111111-1111-4111-8111-111111111111"
     res = _get(_token(session_id=SESSION))
-    assert res.status_code == 401 and res.json()["detail"] == "Signed in on another device"
+    assert res.status_code == 409 and res.json()["detail"] == "This account is already signed in on another device."
 
 
-def test_session_check_failure_allows_token(sessions):
-    sessions["fail"] = True
+def test_token_from_ended_session_is_rejected(presence):
+    presence["alive"] = False
+    res = _get(_token(session_id=SESSION))
+    assert res.status_code == 401 and res.json()["detail"] == "Session ended"
+
+
+def test_signout_frees_the_account(presence):
+    headers = {"Authorization": f"Bearer {_token(session_id=SESSION)}"}
+    assert client.post("/auth/signout", headers=headers).json() == {"ok": True}
+    assert presence["released"] == [SESSION] and presence["holder"] is None
+
+
+def test_session_check_failure_allows_token(presence):
+    presence["fail"] = True
     assert _get(_token(session_id=SESSION)).status_code == 200
