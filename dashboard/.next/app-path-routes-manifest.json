@@ -1,14 +1,14 @@
 {
   "/_not-found/page": "/_not-found",
   "/api/account/password/route": "/api/account/password",
-  "/api/admin/users/route": "/api/admin/users",
   "/api/admin/users/[id]/route": "/api/admin/users/[id]",
+  "/api/admin/users/route": "/api/admin/users",
   "/page": "/",
   "/login/page": "/login",
-  "/(app)/history/page": "/history",
-  "/(app)/blogs/page": "/blogs",
   "/(app)/dashboard/page": "/dashboard",
-  "/(app)/profile/page": "/profile",
   "/(app)/positive-leads/page": "/positive-leads",
-  "/(app)/users/page": "/users"
+  "/(app)/blogs/page": "/blogs",
+  "/(app)/profile/page": "/profile",
+  "/(app)/users/page": "/users",
+  "/(app)/history/page": "/history"
 }

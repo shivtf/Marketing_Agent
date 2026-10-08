@@ -68,6 +68,23 @@ on conflict (user_id) do update set session_id = excluded.session_id, last_seen 
 returning session_id
 """
 IN_USE = "This account is already signed in on another device."
+# Same as migrations/001_dashboard_presence.sql, so the check works without running that file by hand.
+_CREATE = """
+create table if not exists public.dashboard_presence (
+  user_id    uuid primary key references auth.users (id) on delete cascade,
+  session_id uuid not null,
+  last_seen  timestamptz not null default now()
+);
+alter table public.dashboard_presence enable row level security;
+"""
+_table_ready = False
+
+
+async def _ensure_table(pool) -> None:
+    global _table_ready
+    if not _table_ready:
+        await pool.execute(_CREATE)
+        _table_ready = True
 
 
 async def _session_ended(session_id: str) -> bool:
@@ -81,7 +98,9 @@ async def _claim(user_id: str, session_id: str) -> bool:
     """Take or keep the account for this session; False while another session is using it."""
     from app.data import _pg
 
-    return await (await _pg()).fetchval(_CLAIM, user_id, session_id) is not None
+    pool = await _pg()
+    await _ensure_table(pool)
+    return await pool.fetchval(_CLAIM, user_id, session_id) is not None
 
 
 async def release(user_id: str, session_id: str) -> None:
@@ -101,7 +120,8 @@ async def _check_session(claims: dict) -> None:
         ended = await _session_ended(session_id)
         holds = ended or await _claim(claims["sub"], session_id)
     except Exception:  # noqa: BLE001 - an extra check on top of the verified token (e.g. table not created yet)
-        log.warning("Could not check the sign-in session; allowing the token", exc_info=True)
+        # Logged as an error: while this fails, a second sign-in is not refused.
+        log.error("One-sign-in check failed; allowing the token", exc_info=True)
         return
     if ended:
         raise _unauthorized("Session ended")

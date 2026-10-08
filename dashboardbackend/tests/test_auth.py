@@ -90,7 +90,10 @@ def presence(monkeypatch):
                 return session_id
             return None
 
-        async def execute(self, _sql, user_id, session_id):
+        async def execute(self, sql, *args):
+            if "create table" in sql:
+                return
+            user_id, session_id = args
             state["released"].append(session_id)
             if state["holder"] == session_id:
                 state["holder"] = None
