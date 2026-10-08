@@ -24,10 +24,10 @@ def _auth():
 
 
 LEADS = [
-    {"id": "a", "number": 2, "source": "search", "status": "Awaiting", "email": "p@q.co", "title": "CEO",
+    {"id": "a", "number": 2, "source": "search", "status": "Sent", "email": "p@q.co", "title": "CEO",
      "company": "Acme"},
     {"id": "b", "number": 1, "source": "hn_hiring", "status": "Responded", "email": "r@s.co"},
-    {"id": "c", "number": 3, "source": "hn_hiring", "status": "Awaiting", "email": "t@u.co"},
+    {"id": "c", "number": 3, "source": "hn_hiring", "status": "Not Sent", "email": "t@u.co"},
 ]
 
 
@@ -58,13 +58,13 @@ def db(monkeypatch):
 def test_leads_page_filters_in_sql_and_hides_details(db):
     calls, answer = db
     answer.update(rows=LEADS[:2], value=120)
-    res = client.get("/leads?status=awaiting&source=search&page=3&limit=20", headers=_auth()).json()
+    res = client.get("/leads?status=sent&source=search&page=3&limit=20", headers=_auth()).json()
     assert res["total"] == 120 and res["page"] == 3 and res["limit"] == 20
-    assert res["items"][0] == {"id": "a", "number": 2, "source": "search", "status": "Awaiting", "company": "Acme"}
+    assert res["items"][0] == {"id": "a", "number": 2, "source": "search", "status": "Sent", "company": "Acme"}
     count_sql, count_args = calls[0]
     page_sql, page_args = calls[1]
-    assert "where status = $1 and source = $2" in count_sql and count_args == ("Awaiting", "search")
-    assert "limit $3 offset $4" in page_sql and page_args == ("Awaiting", "search", 20, 40)
+    assert "where status = $1 and source = $2" in count_sql and count_args == ("Sent", "search")
+    assert "limit $3 offset $4" in page_sql and page_args == ("Sent", "search", 20, 40)
 
 
 def test_leads_defaults_to_first_page_of_50(db):
@@ -89,17 +89,20 @@ def test_blogs_page_counts_posted(db):
 def test_lead_stats(monkeypatch):
     async def rows(*_):
         return [
-            {"source": "hn_hiring", "status": "Awaiting", "n": 1},
+            {"source": "hn_hiring", "status": "Sent", "n": 1},
             {"source": "hn_hiring", "status": "Responded", "n": 1},
-            {"source": "search", "status": "Awaiting", "n": 1},
+            {"source": "search", "status": "Not Sent", "n": 2},
+            {"source": "search", "status": "Bounced", "n": 1},
         ]
 
     monkeypatch.setattr(data, "_rows", rows)
     assert client.get("/leads/stats", headers=_auth()).json() == {
-        "total": 3,
-        "awaiting": 2,
+        "total": 5,
+        "notSent": 2,
+        "awaiting": 1,
         "responded": 1,
-        "bySource": {"hn_hiring": 2, "search": 1},
+        "bounced": 1,
+        "bySource": {"search": 3, "hn_hiring": 2},
     }
 
 

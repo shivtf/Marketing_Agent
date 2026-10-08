@@ -1,5 +1,5 @@
 // All data access lives here. Everything comes from the backend (dashboardbackend/app).
-import { getSession } from './auth';
+import { endSession, getSession } from './auth';
 
 // ---------- Backend (eval/dashboardbackend) ----------
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -23,6 +23,7 @@ export async function apiFetch(path, options = {}) {
   if (!res.ok) {
     // FastAPI puts the reason in { detail } (e.g. a missing table); show it when it's plain text.
     const detail = await res.json().then((b) => b.detail).catch(() => null);
+    if (res.status === 401 && session) await endSession(detail); // signed out, e.g. by a sign-in elsewhere
     throw new ApiError(typeof detail === 'string' ? detail : `Request failed (${res.status})`, res.status);
   }
   return res.json();

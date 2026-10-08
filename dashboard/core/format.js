@@ -27,7 +27,7 @@ export function fmtDate(iso, mode = 'full') {
 // Whole days between an ISO time and now (0 = less than a day ago).
 export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0);
 
-export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'gray', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red', Bounced: 'red' }[t] || 'gray');
+export const toneOf = (t) => ({ Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'gray', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', Sent: 'blue', 'Not Sent': 'gray', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red', Bounced: 'red' }[t] || 'gray');
 
 // Where the agent found a lead (backend /leads `source`): web search or one of its job-board feeds
 // (Marketing-AI-Agent config/sources.yaml).

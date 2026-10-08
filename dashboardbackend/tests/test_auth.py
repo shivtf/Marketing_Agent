@@ -67,3 +67,42 @@ def test_bad_signature():
 
 def test_removed_user_is_rejected():
     assert _get(_token(app_metadata={"role": "employee", "removed": True})).status_code == 401
+
+
+SESSION = "7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d"
+
+
+@pytest.fixture
+def sessions(monkeypatch):
+    """Fake auth.sessions lookup: `alive` says whether the token's session still exists."""
+    from app import data
+
+    state = {"alive": True, "fail": False}
+
+    class Pool:
+        async def fetchval(self, _sql, session_id):
+            assert session_id == SESSION
+            return 1 if state["alive"] else None
+
+    async def pg():
+        if state["fail"]:
+            raise RuntimeError("no database")
+        return Pool()
+
+    monkeypatch.setattr(data, "_pg", pg)
+    return state
+
+
+def test_token_from_current_session_is_accepted(sessions):
+    assert _get(_token(session_id=SESSION)).status_code == 200
+
+
+def test_token_from_ended_session_is_rejected(sessions):
+    sessions["alive"] = False
+    res = _get(_token(session_id=SESSION))
+    assert res.status_code == 401 and res.json()["detail"] == "Signed in on another device"
+
+
+def test_session_check_failure_allows_token(sessions):
+    sessions["fail"] = True
+    assert _get(_token(session_id=SESSION)).status_code == 200

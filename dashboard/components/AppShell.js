@@ -77,8 +77,9 @@ export function AppShell({ children }) {
       } catch (err) {
         if (cancelled) return;
         if (err.status === 0) { setState('offline'); return; }
-        await auth.signOut(); // backend rejected the token
-        router.replace('/login');
+        // Backend rejected the token: forget it in this browser only (a global sign-out would also end the
+        // account's newer session on another device).
+        await auth.endSession(err.message);
       }
     })().catch(() => { if (!cancelled) router.replace('/login'); });
     return () => { cancelled = true; };

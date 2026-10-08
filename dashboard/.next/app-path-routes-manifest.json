@@ -5,10 +5,10 @@
   "/api/admin/users/[id]/route": "/api/admin/users/[id]",
   "/page": "/",
   "/login/page": "/login",
-  "/(app)/positive-leads/page": "/positive-leads",
-  "/(app)/profile/page": "/profile",
-  "/(app)/blogs/page": "/blogs",
   "/(app)/history/page": "/history",
-  "/(app)/users/page": "/users",
-  "/(app)/dashboard/page": "/dashboard"
+  "/(app)/blogs/page": "/blogs",
+  "/(app)/dashboard/page": "/dashboard",
+  "/(app)/profile/page": "/profile",
+  "/(app)/positive-leads/page": "/positive-leads",
+  "/(app)/users/page": "/users"
 }

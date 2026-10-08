@@ -27,10 +27,18 @@ select c.id, row_number() over (order by c.collected_at, c.id) as number,
        -- Where the agent found the lead: 'leadgen:search' -> 'search', 'leadgen:feed:hn_hiring' -> 'hn_hiring'.
        coalesce(nullif(regexp_replace(lower(coalesce(co.source, '')), '^(leadgen:)?(feed:)?', ''), ''), 'other')
          as source,
-       -- Out-of-office and bounce messages are automatic, so they don't count as a response.
+       -- Where outreach stands: a reply from a person wins (out-of-office and bounce messages are automatic, so
+       -- they don't count), then a bounce, then a delivered email; otherwise nothing has been sent yet.
        case when exists (select 1 from replies r where r.contact_id = c.id
                                             and coalesce(r.label, '') not in ('ooo', 'bounce'))
-            then 'Responded' else 'Awaiting' end as status,
+              then 'Responded'
+            when exists (select 1 from emails e where e.contact_id = c.id and e.status = 'bounced')
+              or exists (select 1 from replies r where r.contact_id = c.id and r.label = 'bounce')
+              then 'Bounced'
+            when exists (select 1 from emails e where e.contact_id = c.id
+                                                and e.status = 'sent' and e.sent_at is not null)
+              then 'Sent'
+            else 'Not Sent' end as status,
        -- How the lead answered: the label of its latest classified reply from a person; failing that, a reply
        -- not classified yet, then bounces (bounced email or bounce message), then out-of-office; else 'none'.
        coalesce(
@@ -129,7 +137,8 @@ def _without(d: dict, *keys: str) -> dict:
 
 
 Source = Annotated[str | None, Query(pattern="^[a-z0-9_.:-]{1,40}$")]
-Status = Annotated[str | None, Query(pattern="^(awaiting|responded)$")]
+Status = Annotated[str | None, Query(pattern="^(not_sent|sent|bounced|responded)$")]
+_STATUS = {"not_sent": "Not Sent", "sent": "Sent", "bounced": "Bounced", "responded": "Responded"}
 PageNo = Annotated[int, Query(ge=1)]
 Limit = Annotated[int, Query(ge=1, le=200)]
 PAGE_SIZE = 50
@@ -154,7 +163,7 @@ async def leads(
     """Newest first, with the company but without contact details (those are in /leads/{id})."""
     conds, args = [], []
     if status:
-        args.append(status.title())  # 'awaiting' -> 'Awaiting'
+        args.append(_STATUS[status])
         conds.append(f"status = ${len(args)}")
     if source:
         args.append(source)
@@ -172,12 +181,15 @@ async def lead_stats() -> dict:
     by_source: dict[str, int] = {}
     for r in rows:
         by_source[r["source"]] = by_source.get(r["source"], 0) + r["n"]
-    total = sum(r["n"] for r in rows)
-    awaiting = sum(r["n"] for r in rows if r["status"] == "Awaiting")
+    def count(status: str) -> int:
+        return sum(r["n"] for r in rows if r["status"] == status)
+
     return {
-        "total": total,
-        "awaiting": awaiting,
-        "responded": total - awaiting,
+        "total": sum(r["n"] for r in rows),
+        "notSent": count("Not Sent"),
+        "awaiting": count("Sent"),  # emailed, no reply yet
+        "responded": count("Responded"),
+        "bounced": count("Bounced"),
         "bySource": dict(sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))),  # most leads first
     }
 

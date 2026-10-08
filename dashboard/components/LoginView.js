@@ -19,7 +19,13 @@ export default function LoginView() {
   auth.getSession().then((session) => {
     if (cancelled) return;
     if (session) router.replace('/dashboard');
-    else { document.body.classList.add('auth-view'); emailRef.current?.focus(); }
+    else {
+      document.body.classList.add('auth-view');
+      emailRef.current?.focus();
+      if (new URLSearchParams(window.location.search).get('ended') === 'elsewhere') {
+        setMsg({ text: 'You were signed out because this account signed in on another device.', tone: 'error' });
+      }
+    }
   });
   return () => { cancelled = true; document.body.classList.remove('auth-view'); };
 }, [router]);
