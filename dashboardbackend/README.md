@@ -12,6 +12,8 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 | `GET /emails/replies`, `/emails/replies/{id}`              | Bearer | replies, with the email each one answers     |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |
 | `GET /agent`, `POST /agent/start`, `POST /agent/stop`      | Bearer | agent status / Start / Stop, forwarded to the pipeline control API (`pipeline-api.md`) |
+| `GET /blogs/plan`, `GET /blogs/plan/{id}`                  | Bearer | the blog plan (briefs by date) and one brief; see `BLOG_PLAN.md` |
+| `POST /blogs/plan/import`, `POST /blogs/plan/{id}/cancel`  | Admin  | upload a blog plan JSON (`?dry_run=true` checks only), cancel a brief |
 
 Protect a new route with `user: dict = Depends(current_user)` (`app/auth.py`).
 

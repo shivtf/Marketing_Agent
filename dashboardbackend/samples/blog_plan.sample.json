@@ -1,0 +1,120 @@
+{
+  "blogs": [
+    {
+      "id": "BLG-001",
+      "topic": "AIDL vs HIDL: Writing a modern HAL in AOSP",
+      "category": "HAL",
+      "keywords": [
+        "AIDL",
+        "HIDL",
+        "Treble"
+      ],
+      "publish_date": "2026-10-12",
+      "tone": "technical, beginner-friendly",
+      "length": "1000-1500 words",
+      "target_versions": [
+        "Android 15"
+      ],
+      "reference_urls": [
+        "https://source.android.com/docs/core/architecture/aidl"
+      ]
+    },
+    {
+      "id": "BLG-002",
+      "topic": "Bringing up a new board: a practical BSP checklist for Android",
+      "category": "BSP",
+      "keywords": [
+        "BSP",
+        "bring-up",
+        "device tree",
+        "bootloader"
+      ],
+      "publish_date": "2026-10-15",
+      "tone": "practical, step by step",
+      "length": "1500-2000 words",
+      "target_versions": [
+        "Android 15"
+      ],
+      "reference_urls": [
+        "https://source.android.com/docs/core/architecture/bootloader"
+      ]
+    },
+    {
+      "id": "BLG-003",
+      "topic": "What changes for vendors in Android 16 GKI",
+      "category": "Kernel",
+      "keywords": [
+        "GKI",
+        "vendor modules",
+        "KMI"
+      ],
+      "publish_date": "2026-10-19",
+      "tone": "technical, news-style",
+      "length": "1000-1200 words",
+      "target_versions": [
+        "Android 16"
+      ],
+      "reference_urls": [
+        "https://source.android.com/docs/core/architecture/kernel/generic-kernel-image"
+      ]
+    },
+    {
+      "id": "BLG-004",
+      "topic": "Writing your first Linux kernel driver for an I2C sensor",
+      "category": "Drivers",
+      "keywords": [
+        "I2C",
+        "kernel driver",
+        "device tree"
+      ],
+      "publish_date": "2026-10-22",
+      "tone": "hands-on tutorial",
+      "length": "1500-2000 words",
+      "target_versions": [
+        "Linux 6.6"
+      ],
+      "reference_urls": [
+        "https://docs.kernel.org/i2c/writing-clients.html"
+      ]
+    },
+    {
+      "id": "BLG-005",
+      "topic": "Speeding up AOSP builds: ccache, Soong and remote execution",
+      "category": "Tooling",
+      "keywords": [
+        "Soong",
+        "ccache",
+        "build speed"
+      ],
+      "publish_date": "2026-10-26",
+      "tone": "practical, opinionated",
+      "length": "1000-1500 words",
+      "target_versions": [
+        "Android 15",
+        "Android 16"
+      ],
+      "reference_urls": [
+        "https://source.android.com/docs/setup/build"
+      ]
+    },
+    {
+      "id": "BLG-006",
+      "topic": "SELinux policy for a new HAL service without the pain",
+      "category": "Security",
+      "keywords": [
+        "SELinux",
+        "sepolicy",
+        "HAL"
+      ],
+      "publish_date": "2026-10-29",
+      "tone": "technical, troubleshooting",
+      "length": "1200-1500 words",
+      "target_versions": [
+        "Android 15"
+      ],
+      "reference_urls": [
+        "https://source.android.com/docs/security/features/selinux"
+      ]
+    }
+  ]
+}

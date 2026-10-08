@@ -159,3 +159,20 @@ async def current_user(creds: Annotated[HTTPAuthorizationCredentials | None, Dep
         raise _unauthorized("Account removed")
     await _check_session(claims)
     return claims
+
+
+async def current_admin(user: Annotated[dict, Depends(current_user)]) -> dict:
+    """FastAPI dependency: 403 unless the user is an admin. The role is read from the database, not the token:
+    a token can be up to an hour out of date after an admin changes someone's role."""
+    from app.data import _pg
+
+    try:
+        role = await (await _pg()).fetchval(
+            "select raw_app_meta_data->>'role' from auth.users where id = $1::uuid", user["sub"]
+        )
+    except Exception as exc:  # noqa: BLE001 - unlike the checks above, admin actions fail closed
+        log.error("Could not read the user's role", exc_info=True)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Couldn't check your role. Try again.") from exc
+    if role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins only.")
+    return user

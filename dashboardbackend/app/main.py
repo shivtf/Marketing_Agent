@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent import router as agent_router
+from app.blog_plan import router as blog_plan_router
 from app.auth import current_user, release
 from app.data import router as data_router
 
@@ -26,6 +27,8 @@ app.add_middleware(
 )
 
 
+# Before data_router: its /blogs/{blog_id} would otherwise take /blogs/plan.
+app.include_router(blog_plan_router)
 app.include_router(data_router)
 app.include_router(agent_router)
 

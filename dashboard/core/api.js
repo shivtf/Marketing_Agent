@@ -75,3 +75,13 @@ export const getReply = (id) => apiFetch(`/emails/replies/${encodeURIComponent(i
 
 export const getBlogs = ({ page, limit } = {}) => apiFetch(`/blogs${qs({ page, limit })}`);
 export const getBlog = (id) => apiFetch(`/blogs/${encodeURIComponent(id)}`);
+
+// ---------- Blog plan (dashboardbackend/app/blog_plan.py, BLOG_PLAN.md) ----------
+// -> { total, byStatus, thisWeek, next, items: [{ id, externalId, topic, category, publishDate, status, ... }] }
+export const getBlogPlan = () => apiFetch('/blogs/plan');
+export const getBlogPlanEntry = (id) => apiFetch(`/blogs/plan/${encodeURIComponent(id)}`);
+// `text` is the uploaded file as is. -> { saved, created, updated, skipped, errors, warnings, items }
+export const importBlogPlan = (text, { dryRun = false } = {}) => apiFetch(`/blogs/plan/import${dryRun ? '?dry_run=true' : ''}`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: text,
+});
+export const cancelBlogPlanEntry = (id) => apiFetch(`/blogs/plan/${encodeURIComponent(id)}/cancel`, { method: 'POST' });

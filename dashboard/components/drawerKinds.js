@@ -5,7 +5,7 @@
 //   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox? }
 import { Icon } from './Icon';
 import { Badge, StatusBadge, SourceCell, ExtLink, MetaRow } from './ui';
-import { pad, fmtDate, toneOf, REPLY_LABELS } from '@/core/format';
+import { pad, fmtDate, fmtDay, toneOf, REPLY_LABELS, PLAN_STATUS } from '@/core/format';
 import { visiblePositive } from './DataProvider';
 import * as api from '@/core/api';
 
@@ -155,5 +155,39 @@ export function getKinds(goto) {
     },
   };
 
-  return { lead, positiveLead, reviewLead, questionLead, sent, reply, blog };
+  // A blog brief from the Blog Plan (uploaded JSON). Previous/Next follow the schedule on the Blogs page.
+  const plan = {
+    section: 'plan',
+    list: (data) => data?.items || [],
+    heading: 'Planned Blog',
+    load: api.getBlogPlanEntry,
+    describe: (d) => {
+      const label = PLAN_STATUS[d.status] || d.status;
+      const list = (xs) => (xs?.length ? xs.join(', ') : '—');
+      return {
+        title: d.externalId,
+        badge: <StatusBadge text={label} />,
+        rows: [
+          <MetaRow key="topic" k="Topic"><b>{d.topic}</b></MetaRow>,
+          <MetaRow key="date" k="Publish Date">{fmtDay(d.publishDate, 'long')}</MetaRow>,
+          <MetaRow key="cat" k="Category">{d.category}</MetaRow>,
+          <MetaRow key="kw" k="Keywords">{list(d.keywords)}</MetaRow>,
+          <MetaRow key="tone" k="Tone">{d.tone || '—'}</MetaRow>,
+          <MetaRow key="len" k="Length">{d.length || '—'}</MetaRow>,
+          <MetaRow key="ver" k="Target Versions">{list(d.targetVersions)}</MetaRow>,
+          <MetaRow key="refs" k="References">
+            {d.referenceUrls?.length
+              ? <ul className="ref-list">{d.referenceUrls.map((u) => <li key={u}><ExtLink href={u}>{u.replace(/^https?:\/\//, '')}</ExtLink></li>)}</ul>
+              : '—'}
+          </MetaRow>,
+          <MetaRow key="by" k="Uploaded By">{d.uploadedBy || '—'}{d.updatedAt && <div className="muted small">{fmtDate(d.updatedAt)}</div>}</MetaRow>,
+        ],
+        action: d.postUrl
+          ? <a className="btn outline block" href={d.postUrl} target="_blank" rel="noopener noreferrer"><Icon name="ext" /> View the posted blog</a>
+          : <div className="muted small">{d.postId ? 'Written, not posted yet.' : 'Not written yet. Writing and posting from the plan are not automatic yet.'}</div>,
+      };
+    },
+  };
+
+  return { lead, positiveLead, reviewLead, questionLead, sent, reply, blog, plan };
 }

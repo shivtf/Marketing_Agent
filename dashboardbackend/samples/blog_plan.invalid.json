@@ -1,0 +1,58 @@
+{
+  "blogs": [
+    {
+      "id": "BLG-101",
+      "category": "HAL",
+      "keywords": [
+        "AIDL"
+      ],
+      "publish_date": "2026-11-02"
+    },
+    {
+      "id": "BLG-102",
+      "topic": "Debugging boot loops on a custom Android board",
+      "category": "BSP",
+      "keywords": [
+        "boot"
+      ],
+      "publish_date": "2026-13-40"
+    },
+    {
+      "id": "BLG-103",
+      "topic": "A look back at Android 9 Treble adoption",
+      "category": "AOSP",
+      "keywords": [
+        "Treble"
+      ],
+      "publish_date": "2025-01-05"
+    },
+    {
+      "id": "BLG-104",
+      "topic": "Vendor partitions explained for new BSP engineers",
+      "category": "BSP",
+      "keywords": [
+        "vendor"
+      ],
+      "publish_date": "2026-11-05",
+      "reference_urls": [
+        "ftp://example.com/vendor.pdf"
+      ]
+    },
+    {
+      "id": "BLG-104",
+      "topic": "Duplicate id: this entry reuses BLG-104",
+      "category": "Embedded",
+      "keywords": [
+        "dup"
+      ],
+      "publish_date": "2026-11-06"
+    },
+    {
+      "id": "BLG-105",
+      "topic": "Yocto vs Buildroot for embedded Linux products",
+      "category": "Linux",
+      "keywords": [],
+      "publish_date": "2026-11-09"
+    }
+  ]
+}

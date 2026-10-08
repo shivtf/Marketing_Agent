@@ -335,3 +335,18 @@ dialog.confirm::backdrop { background: rgba(20, 22, 43, .35); backdrop-filter: b
 .agent-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .agent-card .card-head { margin-bottom: 0; }
 .agent-note { flex: 1; min-width: 200px; line-height: 1.5; }
+
+/* Blog Plan (Blogs page) */
+.plan-upload { display: grid; gap: 10px; margin-bottom: 16px; justify-items: start; }
+.plan-preview { width: 100%; border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: grid; gap: 12px; }
+.plan-preview-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.plan-issues { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
+.plan-issues.error-list { color: var(--red); }
+.plan-issues.warn-list { color: var(--amber); }
+.plan-actions { align-items: center; flex-wrap: wrap; }
+.plan-stats { flex-wrap: wrap; }
+.next-box { max-width: 320px; }
+tr.week-row th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); background: var(--row-hover); padding: 8px 12px; }
+.ellip.struck { text-decoration: line-through; color: var(--muted); }
+.btn.small-btn { height: 30px; padding: 0 10px; font-size: 13px; }
+.ref-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; justify-items: end; }
