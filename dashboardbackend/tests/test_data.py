@@ -67,25 +67,6 @@ def test_leads_page_filters_in_sql_and_hides_details(db):
     assert "limit $3 offset $4" in page_sql and page_args == ("Awaiting", "search", 20, 40)
 
 
-def test_leads_filter_by_reply_and_search(db):
-    calls, _ = db
-    client.get("/leads?reply=not_interested&q=%20Acme_50%25%20", headers=_auth())
-    count_sql, count_args = calls[0]
-    assert "where reply = $1 and (name ilike $2 or company ilike $2 or email ilike $2)" in count_sql
-    assert count_args == ("not_interested", r"%Acme\_50\%%")  # typed _ and % match literally
-
-
-def test_leads_blank_search_is_ignored(db):
-    calls, _ = db
-    client.get("/leads?q=%20%20", headers=_auth())
-    assert ") t where" not in calls[0][0]
-
-
-def test_leads_reply_filter_is_checked(db):
-    assert client.get("/leads?reply=maybe", headers=_auth()).status_code == 422
-    assert client.get("/leads?q=" + "x" * 101, headers=_auth()).status_code == 422
-
-
 def test_leads_defaults_to_first_page_of_50(db):
     calls, _ = db
     res = client.get("/leads", headers=_auth()).json()
@@ -108,9 +89,9 @@ def test_blogs_page_counts_posted(db):
 def test_lead_stats(monkeypatch):
     async def rows(*_):
         return [
-            {"source": "hn_hiring", "status": "Awaiting", "reply": "none", "n": 1},
-            {"source": "hn_hiring", "status": "Responded", "reply": "not_interested", "n": 1},
-            {"source": "search", "status": "Awaiting", "reply": "none", "n": 1},
+            {"source": "hn_hiring", "status": "Awaiting", "n": 1},
+            {"source": "hn_hiring", "status": "Responded", "n": 1},
+            {"source": "search", "status": "Awaiting", "n": 1},
         ]
 
     monkeypatch.setattr(data, "_rows", rows)
@@ -119,7 +100,6 @@ def test_lead_stats(monkeypatch):
         "awaiting": 2,
         "responded": 1,
         "bySource": {"hn_hiring": 2, "search": 1},
-        "byReply": {"none": 2, "not_interested": 1},
     }
 
 

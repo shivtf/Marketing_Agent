@@ -130,11 +130,6 @@ def _without(d: dict, *keys: str) -> dict:
 
 Source = Annotated[str | None, Query(pattern="^[a-z0-9_.:-]{1,40}$")]
 Status = Annotated[str | None, Query(pattern="^(awaiting|responded)$")]
-Reply = Annotated[
-    str | None,
-    Query(pattern="^(none|interested|question|not_interested|unsubscribe|ooo|bounce|unclassified)$"),
-]
-Search = Annotated[str | None, Query(max_length=100)]
 PageNo = Annotated[int, Query(ge=1)]
 Limit = Annotated[int, Query(ge=1, le=200)]
 PAGE_SIZE = 50
@@ -154,15 +149,9 @@ async def _page(base: str, order: str, page: int, limit: int, where: str = "", a
 
 @router.get("/leads")
 async def leads(
-    status: Status = None,
-    source: Source = None,
-    reply: Reply = None,
-    q: Search = None,
-    page: PageNo = 1,
-    limit: Limit = PAGE_SIZE,
+    status: Status = None, source: Source = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
 ) -> dict:
-    """Newest first, with the company but without contact details (those are in /leads/{id}).
-    `q` matches name, company or email."""
+    """Newest first, with the company but without contact details (those are in /leads/{id})."""
     conds, args = [], []
     if status:
         args.append(status.title())  # 'awaiting' -> 'Awaiting'
@@ -170,14 +159,6 @@ async def leads(
     if source:
         args.append(source)
         conds.append(f"source = ${len(args)}")
-    if reply:
-        args.append(reply)
-        conds.append(f"reply = ${len(args)}")
-    if q and q.strip():
-        # Backslash is ilike's default escape character, so typed % and _ match literally.
-        args.append("%" + re.sub(r"([\\%_])", r"\\\1", q.strip()) + "%")
-        n = len(args)
-        conds.append(f"(name ilike ${n} or company ilike ${n} or email ilike ${n})")
     where = f"where {' and '.join(conds)}" if conds else ""
     out = await _page(_LEADS, "number desc", page, limit, where, tuple(args))
     hidden = ("title", "companyUrl", "profileUrl", "email", "lastContactAt")
@@ -187,12 +168,10 @@ async def leads(
 
 @router.get("/leads/stats")
 async def lead_stats() -> dict:
-    rows = await _rows(f"select source, status, reply, count(*) as n from ({_LEADS}) l group by 1, 2, 3")  # noqa: S608
+    rows = await _rows(f"select source, status, count(*) as n from ({_LEADS}) l group by 1, 2")  # noqa: S608
     by_source: dict[str, int] = {}
-    by_reply: dict[str, int] = {}
     for r in rows:
         by_source[r["source"]] = by_source.get(r["source"], 0) + r["n"]
-        by_reply[r["reply"]] = by_reply.get(r["reply"], 0) + r["n"]
     total = sum(r["n"] for r in rows)
     awaiting = sum(r["n"] for r in rows if r["status"] == "Awaiting")
     return {
@@ -200,7 +179,6 @@ async def lead_stats() -> dict:
         "awaiting": awaiting,
         "responded": total - awaiting,
         "bySource": dict(sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))),  # most leads first
-        "byReply": by_reply,
     }
 
 

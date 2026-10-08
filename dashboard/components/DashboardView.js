@@ -1,9 +1,9 @@
 'use client';
 // Page 1: Agent Control + Leads Overview.
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Icon } from './Icon';
 import { OpenRow } from './OpenRow';
-import { useLeadsFilter, useList, useSection, useUpdateSection } from './DataProvider';
+import { useList, useSection, useUpdateSection } from './DataProvider';
 import { Badge, StatusBadge, SourceCell, Skeleton, ErrorBox, CardHead, ViewCell, DataTable, StatCards, Pager } from './ui';
 import * as api from '@/core/api';
 import { pad, fmtDate, sourceLabel, toneOf, LEAD_REPLY_LABELS } from '@/core/format';
@@ -153,45 +153,6 @@ function SourceBreakdown({ stats }) {
   return <div className="card"><CardHead icon="users" title="Leads by Source" />{body}</div>;
 }
 
-// How leads answered, one bar per outcome that has leads. A bar filters the leads table to that outcome
-// (pressing the active bar again clears it).
-function ReplyBreakdown({ stats }) {
-  const { status, data, reload } = stats;
-  const { filter, setFilter } = useLeadsFilter();
-  let body;
-  if (status === 'loading') body = <Skeleton rows={3} />;
-  else if (status === 'error') body = <ErrorBox what="reply outcomes" onRetry={reload} />;
-  else {
-    const counts = data.byReply || {};
-    const entries = Object.keys(LEAD_REPLY_LABELS).filter((k) => counts[k]).map((k) => [k, counts[k]]);
-    const total = entries.reduce((sum, [, n]) => sum + n, 0);
-    body = !total ? <div className="muted small">No leads yet.</div> : (
-      <ul className="source-bars">
-        {entries.map(([k, n]) => {
-          const pct = Math.round((n / total) * 100);
-          const on = filter.reply === k;
-          const label = LEAD_REPLY_LABELS[k];
-          return (
-            <li key={k}>
-              <button
-                className={`source-bar bar-button${on ? ' active' : ''}`}
-                aria-pressed={on}
-                title={`Show ${label.toLowerCase()} leads: ${n} (${pct}%)`}
-                onClick={() => setFilter((f) => ({ ...f, reply: on ? 'all' : k }))}
-              >
-                <span className="source-name">{label}</span>
-                <span className="source-track" aria-hidden="true"><span className={`source-fill ${toneOf(label)}`} style={{ width: `${(n / total) * 100}%` }} /></span>
-                <span className="source-count">{n}<span className="muted"> · {pct}%</span></span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    );
-  }
-  return <div className="card"><CardHead icon="reply" title="Leads by Reply" />{body}</div>;
-}
-
 // ---------- Leads table ----------
 // 'No reply' is the usual case, so it stays quiet as a dash instead of a badge on most rows.
 function ReplyBadge({ reply }) {
@@ -200,83 +161,13 @@ function ReplyBadge({ reply }) {
   return <Badge text={label} tone={toneOf(label)} />;
 }
 
-function Chip({ group, value, children }) {
-  const { filter, setFilter } = useLeadsFilter();
-  const on = filter[group] === value;
-  const select = () => setFilter((f) => ({ ...f, [group]: value }));
-  return (
-    <button className={`chip${on ? ' active' : ''}`} aria-pressed={on} onClick={select}>
-      {children}
-    </button>
-  );
-}
-
-// Search box for the leads table. Typing updates the box at once and the filter (one request) after a pause.
-function LeadSearch() {
-  const { filter, setFilter } = useLeadsFilter();
-  const [text, setText] = useState(filter.q);
-  useEffect(() => {
-    if (text === filter.q) return undefined;
-    const t = setTimeout(() => setFilter((f) => ({ ...f, q: text })), 300);
-    return () => clearTimeout(t);
-  }, [text, filter.q, setFilter]);
-  return (
-    <input
-      className="search-input"
-      type="search"
-      placeholder="Search name, company or email"
-      aria-label="Search leads"
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-    />
-  );
-}
-
-function ReplySelect() {
-  const { filter, setFilter } = useLeadsFilter();
-  return (
-    <select
-      className="select"
-      aria-label="Filter by reply"
-      value={filter.reply}
-      onChange={(e) => setFilter((f) => ({ ...f, reply: e.target.value }))}
-    >
-      <option value="all">Any reply</option>
-      {Object.entries(LEAD_REPLY_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-    </select>
-  );
-}
-
-// One page of leads; search and the status/source/reply filters run on the server. Source chips come from the
-// lead stats (every source with leads, most first), since one page doesn't show them all.
-function LeadsTable({ stats }) {
+// Every lead, newest first, one page at a time. A lead is shown by its company (the person's name when the
+// agent didn't record one).
+function LeadsTable() {
   const leads = useList('leads');
   const { status, data, reload, fetching } = leads;
-  const { filter } = useLeadsFilter();
-  const sources = Object.keys(stats.data?.bySource || {});
-  const filtering = filter.status !== 'all' || filter.source !== 'all' || filter.reply !== 'all' || filter.q.trim() !== '';
   return (
     <div className="card">
-      {status === 'ready' && (data.total > 0 || filtering) && (
-        <div className="filters">
-          <div className="chip-group">
-            <LeadSearch />
-            <ReplySelect />
-          </div>
-          <div className="chip-group">
-            <Chip group="status" value="all">All</Chip>
-            <Chip group="status" value="awaiting">Awaiting</Chip>
-            <Chip group="status" value="responded">Responded</Chip>
-          </div>
-          {/* Only worth filtering when leads come from more than one source (or a filter is already on). */}
-          {(sources.length > 1 || filter.source !== 'all') && (
-            <div className="chip-group">
-              <Chip group="source" value="all">All sources</Chip>
-              {sources.map((k) => <Chip key={k} group="source" value={k}>{sourceLabel(k)}</Chip>)}
-            </div>
-          )}
-        </div>
-      )}
       <DataTable
         status={status}
         head={(
@@ -289,10 +180,7 @@ function LeadsTable({ stats }) {
         rows={data.items.map((l) => (
           <OpenRow key={l.id} kind="lead" id={l.id}>
             <td className="num">{pad(l.number)}</td>
-            <td>
-              <div className="name">{l.name}</div>
-              {l.company && l.company !== l.name && <div className="muted small">{l.company}</div>}
-            </td>
+            <td className="name">{l.company || l.name}</td>
             <td><SourceCell source={l.source} /></td>
             <td><StatusBadge text={l.status} /></td>
             <td><ReplyBadge reply={l.reply} /></td>
@@ -301,7 +189,7 @@ function LeadsTable({ stats }) {
           </OpenRow>
         ))}
         emptyIcon="users"
-        emptyText={filtering ? 'No leads match these filters or search' : 'No leads yet'}
+        emptyText="No leads yet"
         what="leads"
         onRetry={reload}
       />
@@ -319,11 +207,8 @@ export default function DashboardView() {
         <div className="section-head"><h2 className="section-title">Leads Overview</h2></div>
         <div className="stack-v">
           <LeadStatCards stats={stats} />
-          <div className="grid2">
-            <SourceBreakdown stats={stats} />
-            <ReplyBreakdown stats={stats} />
-          </div>
-          <div><LeadsTable stats={stats} /></div>
+          <div><SourceBreakdown stats={stats} /></div>
+          <div><LeadsTable /></div>
         </div>
       </section>
     </main>
