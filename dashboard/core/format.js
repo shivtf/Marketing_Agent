@@ -5,11 +5,6 @@ export const REPLY_LABELS = {
   ooo: 'Out of office', bounce: 'Bounced', unsubscribe: 'Unsubscribed',
 };
 
-// A lead's reply outcome (backend /leads `reply`), in the order the dashboard lists them.
-export const LEAD_REPLY_LABELS = {
-  interested: 'Interested', question: 'Question', not_interested: 'Not interested', unsubscribe: 'Unsubscribed',
-  bounce: 'Bounced', ooo: 'Out of office', unclassified: 'Not classified', none: 'No reply',
-};
 
 export const pad = (n) => String(n).padStart(3, '0');
 

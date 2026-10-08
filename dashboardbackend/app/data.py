@@ -41,20 +41,6 @@ select c.id, row_number() over (order by c.collected_at, c.id) as number,
                                                 and e.status = 'sent' and e.sent_at is not null)
               then 'Sent'
             else 'Not Sent' end as status,
-       -- How the lead answered: the label of its latest classified reply from a person; failing that, a reply
-       -- not classified yet, then bounces (bounced email or bounce message), then out-of-office; else 'none'.
-       coalesce(
-         (select r.label from replies r where r.contact_id = c.id
-                                          and r.label is not null and r.label not in ('ooo', 'bounce')
-          order by r.received_at desc limit 1),
-         case when exists (select 1 from replies r where r.contact_id = c.id and r.label is null)
-              then 'unclassified' end,
-         case when exists (select 1 from emails e where e.contact_id = c.id and e.status = 'bounced')
-                or exists (select 1 from replies r where r.contact_id = c.id and r.label = 'bounce')
-              then 'bounce' end,
-         case when exists (select 1 from replies r where r.contact_id = c.id and r.label = 'ooo')
-              then 'ooo' end,
-         'none') as reply,
        c.collected_at as added_at, c.last_engaged_at as last_contact_at
 from contacts c join companies co on co.id = c.company_id
 """
@@ -162,7 +148,7 @@ async def _page(base: str, order: str, page: int, limit: int, where: str = "", a
 async def leads(
     status: Status = None, source: Source = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
 ) -> dict:
-    """Newest first: company, email and what the company does; other contact details are in /leads/{id}."""
+    """Newest first: company and email; what the company does and other details are in /leads/{id}."""
     conds, args = [], []
     if status:
         args.append(_STATUS[status])
@@ -172,7 +158,7 @@ async def leads(
         conds.append(f"source = ${len(args)}")
     where = f"where {' and '.join(conds)}" if conds else ""
     out = await _page(_LEADS, "number desc", page, limit, where, tuple(args))
-    hidden = ("title", "companyUrl", "profileUrl", "lastContactAt")
+    hidden = ("title", "companyUrl", "profileUrl", "lastContactAt", "about")
     out["items"] = [_without(r, *hidden) for r in out["items"]]
     return out
 

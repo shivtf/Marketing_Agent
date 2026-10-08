@@ -64,8 +64,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 .table-wrap { overflow-x: auto; max-height: 460px; overflow-y: auto; transition: opacity .15s; }
 .table-wrap.busy { opacity: .55; }
-/* Leads table: one line of "what they do", cut off with … (the full text is in the cell's tooltip and the drawer). */
-td.about { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.nowrap { white-space: nowrap; }
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
 .pager .row { align-items: center; }

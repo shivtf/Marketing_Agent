@@ -6,7 +6,7 @@ import { OpenRow } from './OpenRow';
 import { useList, useSection, useUpdateSection } from './DataProvider';
 import { Badge, StatusBadge, SourceCell, Skeleton, ErrorBox, CardHead, ViewCell, DataTable, StatCards, Pager } from './ui';
 import * as api from '@/core/api';
-import { pad, fmtDate, sourceLabel, toneOf, LEAD_REPLY_LABELS } from '@/core/format';
+import { pad, fmtDate, sourceLabel } from '@/core/format';
 
 // ---------- Agent Control ----------
 // There is one marketing agent, on the office machine (approvals happen in Slack). Start/Stop are requests: the agent
@@ -154,15 +154,8 @@ function SourceBreakdown({ stats }) {
 }
 
 // ---------- Leads table ----------
-// 'No reply' is the usual case, so it stays quiet as a dash instead of a badge on most rows.
-function ReplyBadge({ reply }) {
-  const label = LEAD_REPLY_LABELS[reply] || reply;
-  if (!reply || reply === 'none') return <span className="muted">—</span>;
-  return <Badge text={label} tone={toneOf(label)} />;
-}
-
-// Every lead, newest first, one page at a time: the company, the email we found, what the company does and when
-// the lead came in.
+// Every lead, newest first, one page at a time: the company, the email we found and when the lead came in.
+// What the company does is in the lead drawer.
 function LeadsTable() {
   const leads = useList('leads');
   const { status, data, reload, fetching } = leads;
@@ -172,8 +165,7 @@ function LeadsTable() {
         status={status}
         head={(
           <>
-            <th>#</th><th>Company</th><th>Email</th><th>What they do</th><th>Source</th><th>Status</th><th>Reply</th>
-            <th>Added</th><th className="view">View</th>
+            <th>#</th><th>Company</th><th>Email</th><th>Source</th><th>Status</th><th>Added</th><th className="view">View</th>
           </>
         )}
         busy={fetching}
@@ -183,10 +175,8 @@ function LeadsTable() {
             <td className="num">{pad(l.number)}</td>
             <td className="name">{l.company || 'Unknown company'}</td>
             <td className="muted">{l.email || '—'}</td>
-            <td className="about" title={l.about || undefined}>{l.about || <span className="muted">—</span>}</td>
             <td><SourceCell source={l.source} /></td>
             <td><StatusBadge text={l.status} /></td>
-            <td><ReplyBadge reply={l.reply} /></td>
             <td className="muted nowrap">{fmtDate(l.addedAt, 'table')}</td>
             <ViewCell />
           </OpenRow>

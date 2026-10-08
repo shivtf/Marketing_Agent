@@ -25,7 +25,7 @@ def _auth():
 
 LEADS = [
     {"id": "a", "number": 2, "source": "search", "status": "Sent", "email": "p@q.co", "title": "CEO",
-     "company": "Acme"},
+     "company": "Acme", "about": "Builds Android BSPs"},
     {"id": "b", "number": 1, "source": "hn_hiring", "status": "Responded", "email": "r@s.co"},
     {"id": "c", "number": 3, "source": "hn_hiring", "status": "Not Sent", "email": "t@u.co"},
 ]
