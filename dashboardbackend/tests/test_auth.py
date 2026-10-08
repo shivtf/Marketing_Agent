@@ -74,16 +74,19 @@ SESSION = "7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d"
 
 @pytest.fixture
 def presence(monkeypatch):
-    """Fake database for the one-sign-in check: `alive` = the token's Supabase session exists, `holder` = the
-    session currently using the account (None = free), `fail` = the database can't be reached."""
+    """Fake database for the account / one-sign-in check: `alive` = the token's Supabase session exists,
+    `removed` = the account is removed or banned in auth.users, `holder` = the session currently using the
+    account (None = free), `fail` = the database can't be reached."""
     from app import data
 
-    state = {"alive": True, "holder": None, "fail": False, "released": []}
+    state = {"alive": True, "removed": False, "holder": None, "fail": False, "released": []}
 
     class Pool:
+        async def fetchrow(self, sql, *_args):
+            assert "from auth.users u" in sql
+            return {"session_alive": state["alive"], "removed": state["removed"]}
+
         async def fetchval(self, sql, *args):
-            if "auth.sessions where id" in sql:
-                return 1 if state["alive"] else None
             user_id, session_id = args
             if state["holder"] in (None, session_id):
                 state["holder"] = session_id
@@ -122,6 +125,13 @@ def test_token_from_ended_session_is_rejected(presence):
     presence["alive"] = False
     res = _get(_token(session_id=SESSION))
     assert res.status_code == 401 and res.json()["detail"] == "Session ended"
+
+
+def test_account_removed_after_the_token_was_issued_is_rejected(presence):
+    presence["removed"] = True  # the token itself has no "removed" flag: it was issued before the removal
+    res = _get(_token(session_id=SESSION))
+    assert res.status_code == 401 and res.json()["detail"] == "Account removed"
+    assert presence["holder"] is None  # a removed account never takes the sign-in
 
 
 def test_signout_frees_the_account(presence):

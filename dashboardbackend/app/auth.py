@@ -87,11 +87,25 @@ async def _ensure_table(pool) -> None:
         _table_ready = True
 
 
-async def _session_ended(session_id: str) -> bool:
-    """True when the token's Supabase sign-in session no longer exists (signed out, or ended by an admin)."""
+# Read from the database, not the token: a token issued before an admin removed the account still says "not
+# removed" until it expires (up to an hour), and the account's sessions may still exist.
+_ACCOUNT = """
+select exists (select 1 from auth.sessions s where s.id = $2::uuid and s.user_id = u.id) as session_alive,
+       coalesce((u.raw_app_meta_data->>'removed')::boolean, false)
+         or coalesce(u.banned_until > now(), false) as removed
+from auth.users u
+where u.id = $1::uuid
+"""
+
+
+async def _account(user_id: str, session_id: str) -> tuple[bool, bool]:
+    """(session ended, account removed or banned) for the token's user and sign-in session."""
     from app.data import _pg  # here, not at the top: app.data imports this module
 
-    return await (await _pg()).fetchval("select 1 from auth.sessions where id = $1::uuid", session_id) is None
+    row = await (await _pg()).fetchrow(_ACCOUNT, user_id, session_id)
+    if row is None:  # the user no longer exists
+        return True, True
+    return not row["session_alive"], row["removed"]
 
 
 async def _claim(user_id: str, session_id: str) -> bool:
@@ -117,12 +131,14 @@ async def _check_session(claims: dict) -> None:
     if not session_id:
         return
     try:
-        ended = await _session_ended(session_id)
-        holds = ended or await _claim(claims["sub"], session_id)
+        ended, removed = await _account(claims["sub"], session_id)
+        holds = ended or removed or await _claim(claims["sub"], session_id)
     except Exception:  # noqa: BLE001 - an extra check on top of the verified token (e.g. table not created yet)
-        # Logged as an error: while this fails, a second sign-in is not refused.
-        log.error("One-sign-in check failed; allowing the token", exc_info=True)
+        # Logged as an error: while this fails, removed accounts and second sign-ins are not refused.
+        log.error("Account / sign-in check failed; allowing the token", exc_info=True)
         return
+    if removed:
+        raise _unauthorized("Account removed")
     if ended:
         raise _unauthorized("Session ended")
     if not holds:
@@ -138,7 +154,7 @@ async def current_user(creds: Annotated[HTTPAuthorizationCredentials | None, Dep
         claims = decode_token(creds.credentials)
     except jwt.PyJWTError as exc:
         raise _unauthorized("Invalid or expired token") from exc
-    # Removed accounts are banned (no refresh), but an already-issued token lives until it expires; refuse it now.
+    # Fast path for tokens issued after removal; _check_session also catches older ones from the database.
     if (claims.get("app_metadata") or {}).get("removed"):
         raise _unauthorized("Account removed")
     await _check_session(claims)

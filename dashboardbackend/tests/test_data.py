@@ -174,3 +174,25 @@ def test_preview_drops_greeting_and_quoted_mail():
     assert data._preview(body) == "Yes, a call on Thursday works. Send me two time slots."
     assert data._preview("> only quoted text") == ""
     assert data._preview(None) == ""
+
+
+def test_concurrent_first_requests_share_one_pool(monkeypatch):
+    import asyncio
+
+    created = []
+
+    async def create_pool(*_a, **_k):
+        await asyncio.sleep(0.01)  # let the other requests arrive while the pool is being made
+        created.append(object())
+        return created[-1]
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/db")
+    monkeypatch.setattr(data, "_pool", None)
+    monkeypatch.setattr(data, "_pool_lock", asyncio.Lock())
+    monkeypatch.setattr(data.asyncpg, "create_pool", create_pool)
+
+    async def five_at_once():
+        return await asyncio.gather(*(data._pg() for _ in range(5)))
+
+    pools = asyncio.run(five_at_once())
+    assert len(created) == 1 and all(p is created[0] for p in pools)

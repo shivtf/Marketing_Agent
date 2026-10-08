@@ -5,6 +5,7 @@ and returns the same shapes the dashboard's mock data used (eval/dashboard/core/
 frontend only has to swap its mock bodies for apiFetch() calls. Every route requires a Supabase login.
 """
 
+import asyncio
 import os
 import re
 import uuid
@@ -18,6 +19,7 @@ from app.auth import current_user
 router = APIRouter(dependencies=[Depends(current_user)])
 
 _pool: asyncpg.Pool | None = None
+_pool_lock = asyncio.Lock()  # the dashboard sends several requests at once; they must share one pool
 
 # Contacts get a stable 1-based number (oldest first) so the UI can show "#12".
 _LEADS = """
@@ -86,11 +88,13 @@ select * from (
 async def _pg() -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        dsn = os.environ.get("DATABASE_URL", "").strip()
-        if not dsn:
-            raise HTTPException(503, "DATABASE_URL is not set on the dashboard backend")
-        # statement_cache_size=0: required behind pgbouncer / the Supabase transaction pooler.
-        _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5, statement_cache_size=0)
+        async with _pool_lock:
+            if _pool is None:  # another request may have created it while this one waited
+                dsn = os.environ.get("DATABASE_URL", "").strip()
+                if not dsn:
+                    raise HTTPException(503, "DATABASE_URL is not set on the dashboard backend")
+                # statement_cache_size=0: required behind pgbouncer / the Supabase transaction pooler.
+                _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5, statement_cache_size=0)
     return _pool
 
 
