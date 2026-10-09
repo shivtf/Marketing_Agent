@@ -33,17 +33,6 @@ export function fmtDay(ymd, mode = 'day') {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', opts);
 }
 
-// The Monday of a calendar date's week, as "YYYY-MM-DD".
-export function weekOf(ymd) {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const day = new Date(y, m - 1, d);
-  day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
-  return [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-');
-}
-
-// Blog plan status (backend /blogs/plan) as shown in the dashboard.
-export const PLAN_STATUS = { planned: 'Planned', written: 'Written', posted: 'Posted', missed: 'Missed', cancelled: 'Cancelled' };
-
 // Whole days between an ISO time and now (0 = less than a day ago).
 export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0);
 

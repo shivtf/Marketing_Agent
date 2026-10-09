@@ -1,6 +1,9 @@
 {
-  "/api/blogs/weekly-files/route": "app/api/blogs/weekly-files/route.js",
   "/login/page": "app/login/page.js",
   "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
-  "/(app)/blogs/page": "app/(app)/blogs/page.js"
+  "/(app)/blogs/page": "app/(app)/blogs/page.js",
+  "/(app)/history/page": "app/(app)/history/page.js",
+  "/(app)/positive-leads/page": "app/(app)/positive-leads/page.js",
+  "/(app)/profile/page": "app/(app)/profile/page.js",
+  "/(app)/users/page": "app/(app)/users/page.js"
 }

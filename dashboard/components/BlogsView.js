@@ -1,18 +1,15 @@
 'use client';
-// Page 3: Blogs. Weekly Blog Files (the week's JSON, stored as is in Supabase Storage for the publishing backend), the
-// Blog Plan (briefs uploaded as JSON, scheduled by date; dashboardbackend/BLOG_PLAN.md), and the Blog Tracker
-// (blogs written so far).
+// Page 3: Blogs. Weekly Blog Files (the week's JSON, stored as is in Supabase Storage for the publishing backend, and
+// which blog goes out on which day) on top, and the Blog Tracker (blogs written so far) below.
 import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { OpenRow } from './OpenRow';
-import { useList, useSection } from './DataProvider';
+import { useList } from './DataProvider';
 import { Badge, CardHead, StatusBadge, SiteCell, ViewCell, DataTable, Pager, Skeleton, ErrorBox, EmptyBox, MetaRow, ExtLink } from './ui';
 import { FormattedContent } from './FormattedContent';
 import { Icon } from './Icon';
 import { useConfirm } from './ConfirmDialog';
-import * as api from '@/core/api';
 import { getSession, isAdmin } from '@/core/auth';
-import { pad, fmtDate, fmtDay, weekOf, PLAN_STATUS } from '@/core/format';
+import { pad, fmtDate, fmtDay } from '@/core/format';
 import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, weekChoices, fileMonday } from '@/core/blogFiles';
 import { readBlogs, checkWeek } from '@/core/weeklyBlogs';
 
@@ -27,119 +24,6 @@ function useIsAdmin() {
   const [admin, setAdmin] = useState(false);
   useEffect(() => { getSession().then((s) => setAdmin(isAdmin(s))); }, []);
   return admin;
-}
-
-// ---------- Upload: choose a file -> check it (dry run) -> preview -> Import ----------
-
-const ACTIONS = { new: ['New', 'blue'], update: ['Update', 'amber'], skipped: ['Skipped (posted)', 'gray'] };
-
-function PlanPreview({ report, busy, onImport, onCancel }) {
-  const { items, errors, warnings } = report;
-  return (
-    <div className="plan-preview">
-      <div className="plan-preview-head">
-        <b>Check the plan before importing</b>
-        <span className="muted small">
-          {items.length} ready{errors.length ? ` · ${errors.length} problem${errors.length === 1 ? '' : 's'} to fix` : ''}
-        </span>
-      </div>
-      {errors.length > 0 && (
-        <ul className="plan-issues error-list">
-          {errors.map((e, i) => <li key={i}><b>{e.id || 'File'}</b>{e.field && ` · ${e.field}`}: {e.message}</li>)}
-        </ul>
-      )}
-      {warnings.length > 0 && (
-        <ul className="plan-issues warn-list">
-          {warnings.map((w, i) => <li key={i}>{w.id && <b>{w.id}: </b>}{w.message}</li>)}
-        </ul>
-      )}
-      {items.length > 0 && (
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Date</th><th>ID</th><th>Topic</th><th>Category</th><th>Will be</th></tr></thead>
-            <tbody>
-              {items.map((it) => {
-                const [label, tone] = ACTIONS[it.action];
-                return (
-                  <tr key={it.id}>
-                    <td className="nowrap">{fmtDay(it.publishDate)}</td><td className="mono">{it.id}</td>
-                    <td><div className="ellip wide">{it.topic}</div></td><td>{it.category}</td>
-                    <td><Badge text={label} tone={tone} /></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div className="row plan-actions">
-        <button className="btn primary" type="button" disabled={busy || errors.length > 0 || !items.length} onClick={onImport}>
-          {busy ? 'Importing…' : 'Import'}
-        </button>
-        <button className="btn" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
-        {errors.length > 0 && <span className="muted small">Fix the problems in the file and upload it again.</span>}
-      </div>
-    </div>
-  );
-}
-
-function PlanUpload() {
-  const client = useQueryClient();
-  const input = useRef(null);
-  const [preview, setPreview] = useState(null); // { text, report }
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState({ text: '', tone: 'error' });
-
-  async function onFile(e) {
-    const file = e.target.files?.[0];
-    e.target.value = ''; // choosing the same file again still triggers a check
-    if (!file) return;
-    setMsg({ text: '', tone: 'error' });
-    setPreview(null);
-    const text = await file.text();
-    try {
-      JSON.parse(text);
-    } catch {
-      setMsg({ text: `${file.name} is not valid JSON. Check for a missing comma or bracket.`, tone: 'error' });
-      return;
-    }
-    setBusy(true);
-    try {
-      setPreview({ text, report: await api.importBlogPlan(text, { dryRun: true }) });
-    } catch (err) {
-      setMsg({ text: `Couldn't check the file: ${err.message}`, tone: 'error' });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onImport() {
-    setBusy(true);
-    try {
-      const r = await api.importBlogPlan(preview.text);
-      setPreview(null);
-      const parts = [`${r.created} new`, `${r.updated} updated`, r.skipped && `${r.skipped} skipped (already posted)`];
-      setMsg({ text: `Imported: ${parts.filter(Boolean).join(', ')}.`, tone: 'ok' });
-      client.invalidateQueries({ queryKey: ['section', 'plan'] });
-    } catch (err) {
-      setMsg({ text: `Couldn't import: ${err.message}`, tone: 'error' });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="plan-upload">
-      <input ref={input} type="file" accept="application/json,.json" hidden onChange={onFile} />
-      <button className="btn outline" type="button" disabled={busy} onClick={() => input.current?.click()}>
-        <Icon name="doc" /> {busy && !preview ? 'Checking…' : 'Upload blog plan'}
-      </button>
-      {msg.text && <div className="auth-msg" role="alert" aria-live="polite" data-tone={msg.tone}>{msg.text}</div>}
-      {preview && (
-        <PlanPreview report={preview.report} busy={busy} onImport={onImport} onCancel={() => setPreview(null)} />
-      )}
-    </div>
-  );
 }
 
 // ---------- Weekly Blog Files: pick the week -> choose the JSON -> check it -> saved in Supabase Storage ----------
@@ -167,13 +51,6 @@ function ViewDialog({ title, onClose, children }) {
       </div>
     </dialog>
   );
-}
-
-// One stored file, formatted (Supabase's own Storage viewer doesn't show JSON).
-function FileViewer({ file, onClose }) {
-  let pretty = file.text;
-  try { pretty = JSON.stringify(JSON.parse(file.text), null, 2); } catch { /* show it as stored */ }
-  return <ViewDialog title={<span className="mono">{file.name}</span>} onClose={onClose}><pre className="file-view-body">{pretty}</pre></ViewDialog>;
 }
 
 // One blog from a stored file: its details and its text.
@@ -272,8 +149,6 @@ function WeeklyFilesCard({ admin }) {
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
   const [preview, setPreview] = useState(null); // { text, blogs, errors, warnings, week, fileName, label }
   const [confirmDialog, confirm] = useConfirm();
-  const [viewing, setViewing] = useState(null); // { name, text }
-  const [opening, setOpening] = useState(''); // name of the file being fetched for View
   const [blogView, setBlogView] = useState(null); // { name, n }
   const input = useRef(null);
   const chosen = weeks.find((w) => w.week === week);
@@ -333,17 +208,6 @@ function WeeklyFilesCard({ admin }) {
     }
   }
 
-  async function onView(name) {
-    setOpening(name);
-    try {
-      setViewing(await getWeeklyFile(name));
-    } catch (err) {
-      setMsg({ text: `Couldn't open ${name}: ${err.message}`, tone: 'error' });
-    } finally {
-      setOpening('');
-    }
-  }
-
   async function onDownload(name) {
     try {
       const { text } = await getWeeklyFile(name);
@@ -371,9 +235,6 @@ function WeeklyFilesCard({ admin }) {
               <span className="mono file-name">{f.name}</span>
               <span className="file-meta">Uploaded {fmtDate(f.updatedAt)}</span>
               <span className="file-buttons">
-                <button className="btn small-btn" type="button" disabled={opening === f.name} onClick={() => onView(f.name)}>
-                  {opening === f.name ? 'Opening…' : 'View'}
-                </button>
                 <button className="btn small-btn" type="button" onClick={() => onDownload(f.name)}>Download</button>
               </span>
             </div>
@@ -381,7 +242,7 @@ function WeeklyFilesCard({ admin }) {
         </tr>,
       );
       if (f.problem) rows.push(<tr key={`p-${f.name}`}><td colSpan={3} className="muted">Couldn&apos;t read this file: {f.problem}</td></tr>);
-      else if (!f.blogs) rows.push(<tr key={`o-${f.name}`}><td colSpan={3} className="muted">Older week: click View to see it.</td></tr>);
+      else if (!f.blogs) rows.push(<tr key={`o-${f.name}`}><td colSpan={3} className="muted">Older week: click Download to see it.</td></tr>);
       else if (!f.blogs.length) rows.push(<tr key={`e-${f.name}`}><td colSpan={3} className="muted">No blogs in this file.</td></tr>);
       else {
         for (const b of f.blogs) {
@@ -437,98 +298,7 @@ function WeeklyFilesCard({ admin }) {
       )}
       {body}
       {confirmDialog}
-      {viewing && <FileViewer file={viewing} onClose={() => setViewing(null)} />}
       {blogView && <BlogViewer name={blogView.name} n={blogView.n} onClose={() => setBlogView(null)} />}
-    </div>
-  );
-}
-
-// ---------- Blog Plan: counts + schedule by week ----------
-
-function BlogPlanCard({ admin }) {
-  const { status, data, reload } = useSection('plan');
-  const client = useQueryClient();
-  const [confirmDialog, confirm] = useConfirm();
-  const [error, setError] = useState('');
-
-  async function onCancel(e, item) {
-    e.stopPropagation(); // the row itself opens the drawer
-    const ok = await confirm({
-      title: `Cancel "${item.topic}"?`,
-      message: `It comes off the schedule for ${fmtDay(item.publishDate)}. Uploading it again puts it back.`,
-      confirmLabel: 'Cancel blog',
-      danger: true,
-    });
-    if (!ok) return;
-    setError('');
-    try {
-      await api.cancelBlogPlanEntry(item.id);
-      client.invalidateQueries({ queryKey: ['section', 'plan'] });
-    } catch (err) {
-      setError(`Couldn't cancel: ${err.message}`);
-    }
-  }
-
-  let body;
-  if (status === 'loading') body = <Skeleton rows={4} />;
-  else if (status === 'error') body = <ErrorBox what="the blog plan" onRetry={reload} />;
-  else if (!data.items.length) {
-    body = <EmptyBox icon="calendar">No blog plan yet.{admin ? ' Upload a JSON file to schedule blogs.' : ''}</EmptyBox>;
-  } else {
-    const rows = [];
-    let week = null;
-    for (const item of data.items) {
-      const w = weekOf(item.publishDate);
-      if (w !== week) {
-        week = w;
-        rows.push(<tr key={`w-${w}`} className="week-row"><th colSpan={admin ? 5 : 4}>Week of {fmtDay(w).replace(/^\w+, /, '')}</th></tr>);
-      }
-      const label = PLAN_STATUS[item.status] || item.status;
-      const canCancel = admin && !['posted', 'cancelled'].includes(item.status);
-      rows.push(
-        <OpenRow key={item.id} kind="plan" id={item.id}>
-          <td className="nowrap">{fmtDay(item.publishDate)}</td>
-          <td className="name"><div className={`ellip wide${item.status === 'cancelled' ? ' struck' : ''}`}>{item.topic}</div></td>
-          <td className="muted">{item.category}</td>
-          <td><StatusBadge text={label} /></td>
-          {admin && (
-            <td className="view">
-              {canCancel && <button className="btn danger small-btn" type="button" onClick={(e) => onCancel(e, item)}>Cancel</button>}
-            </td>
-          )}
-        </OpenRow>,
-      );
-    }
-    body = (
-      <DataTable
-        status="ready" rows={rows} what="the blog plan" emptyIcon="calendar" emptyText=""
-        head={<><th>Date</th><th>Blog</th><th>Category</th><th>Status</th>{admin && <th className="view" />}</>}
-      />
-    );
-  }
-
-  const posted = data?.byStatus?.posted ?? 0;
-  const next = data?.next;
-  return (
-    <div className="card">
-      <div className="blog-top">
-        <CardHead icon="calendar" title="Blog Plan" />
-        {status === 'ready' && data.items.length > 0 && (
-          <div className="stats plan-stats">
-            <StatBox label="Planned blogs" value={data.total} color="var(--accent)" />
-            <StatBox label="This week" value={data.thisWeek} color="var(--amber)" />
-            <StatBox label="Posted" value={posted} color="var(--green)" />
-            <div className="stat-box next-box">
-              <div className="muted small"><span className="dot" style={{ background: 'var(--muted)' }} />Next blog</div>
-              {next ? <div><b>{fmtDay(next.publishDate)}</b><div className="small ellip wide">{next.topic}</div></div> : <div className="muted">None scheduled</div>}
-            </div>
-          </div>
-        )}
-      </div>
-      {admin && <PlanUpload />}
-      {error && <div className="notice">{error}</div>}
-      {body}
-      {confirmDialog}
     </div>
   );
 }
@@ -543,10 +313,9 @@ export default function BlogsView() {
   const posted = data.posted ?? 0; // across all posts, not just this page
   return (
     <main className="page">
-      <div className="page-head"><h1 className="page-title">Blogs</h1><p className="muted">The weekly blog files with which blog goes out on which day, the blog plan, and every blog written so far.</p></div>
+      <div className="page-head"><h1 className="page-title">Blogs</h1><p className="muted">Which blog goes out on which day, from the weekly blog files, and every blog written so far.</p></div>
       <div className="stack-v">
         <WeeklyFilesCard admin={admin} />
-        <BlogPlanCard admin={admin} />
         <div className="card">
           <div className="blog-top">
             <div>

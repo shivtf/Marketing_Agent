@@ -13,7 +13,6 @@ const FETCHERS = {
   agent: api.getAgent,
   stats: api.getLeadStats,
   positive: api.getPositiveLeads,
-  plan: api.getBlogPlan,
 };
 
 // Paged lists: one page at a time from the backend -> { items, total, page, limit }.
@@ -34,7 +33,7 @@ const OPTIONS = {
   agent: { refetchInterval: (q) => (q.state.data && !q.state.data.inSync ? 3000 : 10000) },
 };
 const EMPTY = {
-  agent: null, stats: null, plan: null,
+  agent: null, stats: null,
   positive: { positive: [], review: [], questions: [], repliedLeads: 0 },
 };
 
