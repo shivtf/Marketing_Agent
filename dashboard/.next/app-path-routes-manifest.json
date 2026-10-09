@@ -1,0 +1,15 @@
+{
+  "/api/account/password/route": "/api/account/password",
+  "/api/admin/users/route": "/api/admin/users",
+  "/api/admin/users/[id]/route": "/api/admin/users/[id]",
+  "/api/blogs/weekly-files/route": "/api/blogs/weekly-files",
+  "/_not-found/page": "/_not-found",
+  "/page": "/",
+  "/login/page": "/login",
+  "/(app)/blogs/page": "/blogs",
+  "/(app)/history/page": "/history",
+  "/(app)/positive-leads/page": "/positive-leads",
+  "/(app)/profile/page": "/profile",
+  "/(app)/users/page": "/users",
+  "/(app)/dashboard/page": "/dashboard"
+}

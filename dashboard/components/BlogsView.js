@@ -142,6 +142,31 @@ function PlanUpload() {
 
 // ---------- Weekly Blog Files: pick the week -> choose the JSON -> saved in Supabase Storage as <week>.json ----------
 
+// One stored file, formatted, in a dialog (Supabase's own Storage viewer doesn't show JSON).
+function FileViewer({ file, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.showModal(); }, []);
+  let pretty = file.text;
+  try { pretty = JSON.stringify(JSON.parse(file.text), null, 2); } catch { /* show it as stored */ }
+  return (
+    <dialog
+      ref={ref}
+      className="confirm file-view"
+      aria-labelledby="file-view-title"
+      onCancel={(e) => { e.preventDefault(); onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} // click outside the card = backdrop
+    >
+      <div className="confirm-card">
+        <div className="file-view-head">
+          <h2 id="file-view-title" className="confirm-title mono">{file.name}</h2>
+          <button className="icon-btn" type="button" onClick={onClose} aria-label="Close" autoFocus><Icon name="close" /></button>
+        </div>
+        <pre className="file-view-body">{pretty}</pre>
+      </div>
+    </dialog>
+  );
+}
+
 function WeeklyFilesCard({ admin }) {
   const weeks = weekChoices();
   const [week, setWeek] = useState(weeks[1].week); // next week
@@ -149,6 +174,8 @@ function WeeklyFilesCard({ admin }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
   const [confirmDialog, confirm] = useConfirm();
+  const [viewing, setViewing] = useState(null); // { name, text }
+  const [opening, setOpening] = useState(''); // name of the file being fetched for View
   const input = useRef(null);
   const chosen = weeks.find((w) => w.week === week);
 
@@ -206,6 +233,17 @@ function WeeklyFilesCard({ admin }) {
     }
   }
 
+  async function onView(name) {
+    setOpening(name);
+    try {
+      setViewing(await getWeeklyFile(name));
+    } catch (err) {
+      setMsg({ text: `Couldn't open ${name}: ${err.message}`, tone: 'error' });
+    } finally {
+      setOpening('');
+    }
+  }
+
   let body;
   if (files.status === 'loading') body = <Skeleton rows={3} />;
   else if (files.status === 'error') body = <ErrorBox what="the weekly blog files" onRetry={load} />;
@@ -221,7 +259,12 @@ function WeeklyFilesCard({ admin }) {
                 <td className="mono">{f.name}</td>
                 <td className="nowrap">{fmtDate(f.updatedAt)}</td>
                 <td className="muted">{f.size == null ? '—' : `${Math.max(1, Math.round(f.size / 1024))} KB`}</td>
-                <td className="view"><button className="btn small-btn" type="button" onClick={() => onDownload(f.name)}>Download</button></td>
+                <td className="view nowrap">
+                  <button className="btn small-btn" type="button" disabled={opening === f.name} onClick={() => onView(f.name)}>
+                    {opening === f.name ? 'Opening…' : 'View'}
+                  </button>{' '}
+                  <button className="btn small-btn" type="button" onClick={() => onDownload(f.name)}>Download</button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -250,6 +293,7 @@ function WeeklyFilesCard({ admin }) {
       )}
       {body}
       {confirmDialog}
+      {viewing && <FileViewer file={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }

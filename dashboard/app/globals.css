@@ -347,6 +347,10 @@ dialog.confirm::backdrop { background: rgba(20, 22, 43, .35); backdrop-filter: b
 .plan-stats { flex-wrap: wrap; }
 .week-pick { flex-wrap: wrap; align-items: center; }
 .week-pick .select { height: 38px; max-width: 100%; }
+dialog.file-view { width: min(860px, calc(100% - 32px)); }
+.file-view-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.file-view-head .confirm-title { font-size: 15px; overflow-wrap: anywhere; }
+.file-view-body { margin: 0; max-height: 70vh; overflow: auto; padding: 14px; border-radius: 10px; background: var(--row-hover); border: 1px solid var(--border); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .next-box { max-width: 320px; }
 tr.week-row th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); background: var(--row-hover); padding: 8px 12px; }
 .ellip.struck { text-decoration: line-through; color: var(--muted); }
