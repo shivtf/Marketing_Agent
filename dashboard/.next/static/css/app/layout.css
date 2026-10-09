@@ -310,6 +310,15 @@ td .ellip.preview { max-width: 320px; }
 @media (max-width: 760px) { .user-form { grid-template-columns: 1fr; } }
 .btn.danger { color: var(--red); border-color: var(--red-bg); }
 .btn.danger:hover { background: var(--red-bg); border-color: var(--red); }
+/* Campaign page (components/CampaignsView.js) */
+.campaign-form { display: grid; grid-template-columns: 2fr 1fr 1fr; grid-gap: 14px; gap: 14px; align-items: end; }
+.campaign-form .detail-field { grid-column: 1 / -1; }
+.campaign-form textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--card); color: var(--text); font: inherit; resize: vertical; }
+.campaign-form textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.check-field { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 13px; }
+.campaign-buttons { justify-content: flex-end; grid-column: 2 / -1; }
+.campaign-detail { white-space: pre-line; max-width: 520px; margin-top: 4px; font-weight: 400; }
+@media (max-width: 760px) { .campaign-form { grid-template-columns: 1fr; } .campaign-buttons { grid-column: auto; justify-content: flex-start; } }
 .user-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .btn.danger-fill { background: var(--red); border-color: var(--red); color: #fff; }
 .btn.danger-fill:hover { background: var(--red); border-color: var(--red); filter: brightness(.92); }

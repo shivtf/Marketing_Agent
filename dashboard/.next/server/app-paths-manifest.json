@@ -1,5 +1,8 @@
 {
+  "/api/campaigns/route": "app/api/campaigns/route.js",
+  "/api/campaigns/[id]/route": "app/api/campaigns/[id]/route.js",
   "/login/page": "app/login/page.js",
-  "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
-  "/(app)/blogs/page": "app/(app)/blogs/page.js"
+  "/(app)/campaign/page": "app/(app)/campaign/page.js",
+  "/(app)/blogs/page": "app/(app)/blogs/page.js",
+  "/(app)/dashboard/page": "app/(app)/dashboard/page.js"
 }

@@ -15,6 +15,7 @@ const TABS = [
   { href: '/history', label: 'History' },
   { href: '/positive-leads', label: 'Positive Leads' },
   { href: '/blogs', label: 'Blogs' },
+  { href: '/campaign', label: 'Campaign' },
 ];
 const ADMIN_TABS = [{ href: '/users', label: 'Users' }];
 const PROFILE_TAB = { href: '/profile', label: 'Profile' };
