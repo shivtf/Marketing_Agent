@@ -6,13 +6,15 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { OpenRow } from './OpenRow';
 import { useList, useSection } from './DataProvider';
-import { Badge, CardHead, StatusBadge, SiteCell, ViewCell, DataTable, Pager, Skeleton, ErrorBox, EmptyBox } from './ui';
+import { Badge, CardHead, StatusBadge, SiteCell, ViewCell, DataTable, Pager, Skeleton, ErrorBox, EmptyBox, MetaRow, ExtLink } from './ui';
+import { FormattedContent } from './FormattedContent';
 import { Icon } from './Icon';
 import { useConfirm } from './ConfirmDialog';
 import * as api from '@/core/api';
 import { getSession, isAdmin } from '@/core/auth';
 import { pad, fmtDate, fmtDay, weekOf, PLAN_STATUS } from '@/core/format';
-import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, weekChoices } from '@/core/blogFiles';
+import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, weekChoices, fileMonday } from '@/core/blogFiles';
+import { readBlogs, checkWeek } from '@/core/weeklyBlogs';
 
 const StatBox = ({ label, value, color }) => (
   <div className="stat-box">
@@ -140,14 +142,14 @@ function PlanUpload() {
   );
 }
 
-// ---------- Weekly Blog Files: pick the week -> choose the JSON -> saved in Supabase Storage as <week>.json ----------
+// ---------- Weekly Blog Files: pick the week -> choose the JSON -> check it -> saved in Supabase Storage ----------
+// The schedule below is read from the stored files themselves (core/weeklyBlogs.js), so it shows exactly what the
+// publishing backend gets. No status: approving and posting happen in that backend.
 
-// One stored file, formatted, in a dialog (Supabase's own Storage viewer doesn't show JSON).
-function FileViewer({ file, onClose }) {
+// A dialog in the dashboard's style (built on <dialog>, like ConfirmDialog).
+function ViewDialog({ title, onClose, children }) {
   const ref = useRef(null);
   useEffect(() => { ref.current?.showModal(); }, []);
-  let pretty = file.text;
-  try { pretty = JSON.stringify(JSON.parse(file.text), null, 2); } catch { /* show it as stored */ }
   return (
     <dialog
       ref={ref}
@@ -158,24 +160,121 @@ function FileViewer({ file, onClose }) {
     >
       <div className="confirm-card">
         <div className="file-view-head">
-          <h2 id="file-view-title" className="confirm-title mono">{file.name}</h2>
+          <h2 id="file-view-title" className="confirm-title">{title}</h2>
           <button className="icon-btn" type="button" onClick={onClose} aria-label="Close" autoFocus><Icon name="close" /></button>
         </div>
-        <pre className="file-view-body">{pretty}</pre>
+        {children}
       </div>
     </dialog>
   );
 }
 
+// One stored file, formatted (Supabase's own Storage viewer doesn't show JSON).
+function FileViewer({ file, onClose }) {
+  let pretty = file.text;
+  try { pretty = JSON.stringify(JSON.parse(file.text), null, 2); } catch { /* show it as stored */ }
+  return <ViewDialog title={<span className="mono">{file.name}</span>} onClose={onClose}><pre className="file-view-body">{pretty}</pre></ViewDialog>;
+}
+
+// One blog from a stored file: its details and its text.
+function BlogViewer({ name, n, onClose }) {
+  const [state, setState] = useState({ status: 'loading' });
+  useEffect(() => {
+    getWeeklyFile(name)
+      .then(({ text }) => {
+        const blog = readBlogs(JSON.parse(text)).blogs?.find((b) => b.n === n);
+        setState(blog ? { status: 'ready', blog } : { status: 'error', message: 'This blog is no longer in the file.' });
+      })
+      .catch((err) => setState({ status: 'error', message: err.message }));
+  }, [name, n]);
+  const b = state.blog;
+  const join = (xs) => (xs?.length ? xs.join(', ') : '—');
+  return (
+    <ViewDialog title={b ? b.topic || b.id : 'Blog'} onClose={onClose}>
+      {state.status === 'loading' && <Skeleton rows={6} />}
+      {state.status === 'error' && <div className="notice">{state.message}</div>}
+      {b && (
+        <div className="file-view-body blog-view">
+          <div className="meta">
+            <MetaRow k="ID"><span className="mono">{b.id || '—'}</span></MetaRow>
+            <MetaRow k="Publish Date">{b.publishDate ? fmtDay(b.publishDate, 'long') : '—'}</MetaRow>
+            <MetaRow k="Category">{b.category || '—'}</MetaRow>
+            <MetaRow k="Keywords">{join(b.keywords)}</MetaRow>
+            <MetaRow k="Tone">{b.tone || '—'}</MetaRow>
+            <MetaRow k="Length">{b.length || '—'}</MetaRow>
+            <MetaRow k="Target Versions">{join(b.targetVersions)}</MetaRow>
+            <MetaRow k="References">
+              {b.referenceUrls.length
+                ? <ul className="ref-list">{b.referenceUrls.map((u) => <li key={u}><ExtLink href={u}>{u.replace(/^https?:\/\//, '')}</ExtLink></li>)}</ul>
+                : '—'}
+            </MetaRow>
+            <MetaRow k="File">{name}</MetaRow>
+          </div>
+          <h3 className="body-title">Content{b.contentFormat ? ` (${b.contentFormat})` : ''}</h3>
+          {b.content.trim()
+            ? <div className="content"><FormattedContent text={b.content.replace(/^# /gm, '## ')} /></div>
+            : <div className="muted">No content in the file.</div>}
+        </div>
+      )}
+    </ViewDialog>
+  );
+}
+
+// What the chosen file holds, checked against the chosen week, before it is saved.
+function UploadPreview({ preview, busy, onSave, onCancel }) {
+  const { blogs, errors, warnings, fileName } = preview;
+  return (
+    <div className="plan-preview">
+      <div className="plan-preview-head">
+        <b>Check the week before saving</b>
+        <span className="muted small">
+          {blogs.length} blog{blogs.length === 1 ? '' : 's'} → <span className="mono">{fileName}</span>
+          {errors.length ? ` · ${errors.length} problem${errors.length === 1 ? '' : 's'} to fix` : ''}
+        </span>
+      </div>
+      {errors.length > 0 && (
+        <ul className="plan-issues error-list">{errors.map((e, i) => <li key={i}>{e.id && <b>{e.id}: </b>}{e.message}</li>)}</ul>
+      )}
+      {warnings.length > 0 && (
+        <ul className="plan-issues warn-list">{warnings.map((w, i) => <li key={i}>{w.id && <b>{w.id}: </b>}{w.message}</li>)}</ul>
+      )}
+      {blogs.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>ID</th><th>Topic</th><th>Category</th></tr></thead>
+            <tbody>
+              {blogs.map((b) => (
+                <tr key={b.n}>
+                  <td className="nowrap">{b.publishDate ? fmtDay(b.publishDate) : '—'}</td><td className="mono">{b.id || '—'}</td>
+                  <td><div className="ellip wide">{b.topic || '—'}</div></td><td>{b.category || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="row plan-actions">
+        <button className="btn primary" type="button" disabled={busy || errors.length > 0} onClick={onSave}>
+          {busy ? 'Saving…' : 'Save to Supabase Storage'}
+        </button>
+        <button className="btn" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
+        {errors.length > 0 && <span className="muted small">Fix the problems in the file (or pick the right week) and upload it again.</span>}
+      </div>
+    </div>
+  );
+}
+
 function WeeklyFilesCard({ admin }) {
-  const weeks = weekChoices();
+  const [weeks] = useState(() => weekChoices()); // fixed while the page is open, so the chosen week can't vanish
   const [week, setWeek] = useState(weeks[1].week); // next week
   const [files, setFiles] = useState({ status: 'loading', items: [] });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
+  const [preview, setPreview] = useState(null); // { text, blogs, errors, warnings, week, fileName, label }
   const [confirmDialog, confirm] = useConfirm();
   const [viewing, setViewing] = useState(null); // { name, text }
   const [opening, setOpening] = useState(''); // name of the file being fetched for View
+  const [blogView, setBlogView] = useState(null); // { name, n }
   const input = useRef(null);
   const chosen = weeks.find((w) => w.week === week);
 
@@ -186,50 +285,51 @@ function WeeklyFilesCard({ admin }) {
 
   async function onFile(e) {
     const file = e.target.files?.[0];
-    e.target.value = ''; // choosing the same file again still triggers an upload
+    e.target.value = ''; // choosing the same file again still triggers a check
     if (!file) return;
     setMsg({ text: '', tone: 'error' });
+    setPreview(null);
     const text = await file.text();
+    let json;
     try {
-      JSON.parse(text);
+      json = JSON.parse(text);
     } catch {
       setMsg({ text: `${file.name} is not valid JSON. Check for a missing comma or bracket.`, tone: 'error' });
       return;
     }
+    const read = readBlogs(json);
+    if (read.error) {
+      setMsg({ text: `${file.name}: ${read.error}`, tone: 'error' });
+      return;
+    }
+    setPreview({ text, blogs: read.blogs, ...checkWeek(read.blogs, week), week, fileName: chosen.fileName, label: chosen.label });
+  }
+
+  async function onSave() {
+    const p = preview;
     setBusy(true);
     try {
       let r;
       try {
-        r = await uploadWeeklyFile(week, text);
+        r = await uploadWeeklyFile(p.week, p.text);
       } catch (err) {
         if (err.status !== 409) throw err;
         const ok = await confirm({
-          title: `Replace ${chosen.fileName}?`,
-          message: `There is already a file for ${chosen.label.replace(/ \(.*/, '')}. The new one replaces it.`,
+          title: `Replace ${p.fileName}?`,
+          message: `There is already a file for ${p.label.replace(/ \(.*/, '')}. The new one replaces it.`,
           confirmLabel: 'Replace',
           danger: true,
         });
         if (!ok) return;
-        r = await uploadWeeklyFile(week, text, true);
+        r = await uploadWeeklyFile(p.week, p.text, true);
       }
+      setPreview(null);
       setMsg({ text: `${r.replaced ? 'Replaced' : 'Saved'} ${r.name} in Supabase Storage.`, tone: 'ok' });
       load();
     } catch (err) {
       setMsg({ text: `Couldn't upload: ${err.message}`, tone: 'error' });
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function onDownload(name) {
-    try {
-      const { text } = await getWeeklyFile(name);
-      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: name });
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setMsg({ text: `Couldn't download ${name}: ${err.message}`, tone: 'error' });
     }
   }
 
@@ -244,30 +344,69 @@ function WeeklyFilesCard({ admin }) {
     }
   }
 
+  async function onDownload(name) {
+    try {
+      const { text } = await getWeeklyFile(name);
+      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: name });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000); // some browsers cancel the download if it goes at once
+    } catch (err) {
+      setMsg({ text: `Couldn't download ${name}: ${err.message}`, tone: 'error' });
+    }
+  }
+
   let body;
-  if (files.status === 'loading') body = <Skeleton rows={3} />;
+  if (files.status === 'loading') body = <Skeleton rows={4} />;
   else if (files.status === 'error') body = <ErrorBox what="the weekly blog files" onRetry={load} />;
-  else if (!files.items.length) body = <EmptyBox icon="doc">No weekly blog files yet.{admin ? ' Pick a week and upload its JSON.' : ''}</EmptyBox>;
+  else if (!files.items.length) body = <EmptyBox icon="calendar">No weekly blog files yet.{admin ? ' Pick a week and upload its JSON.' : ''}</EmptyBox>;
   else {
+    const rows = [];
+    for (const f of files.items) {
+      rows.push(
+        <tr key={`w-${f.name}`} className="week-row">
+          <th colSpan={3}>
+            <div className="week-file">
+              <span>Week of {fmtDay(fileMonday(f.name)).replace(/^\w+, /, '')}</span>
+              <span className="mono file-name">{f.name}</span>
+              <span className="file-meta">Uploaded {fmtDate(f.updatedAt)}</span>
+              <span className="file-buttons">
+                <button className="btn small-btn" type="button" disabled={opening === f.name} onClick={() => onView(f.name)}>
+                  {opening === f.name ? 'Opening…' : 'View'}
+                </button>
+                <button className="btn small-btn" type="button" onClick={() => onDownload(f.name)}>Download</button>
+              </span>
+            </div>
+          </th>
+        </tr>,
+      );
+      if (f.problem) rows.push(<tr key={`p-${f.name}`}><td colSpan={3} className="muted">Couldn&apos;t read this file: {f.problem}</td></tr>);
+      else if (!f.blogs) rows.push(<tr key={`o-${f.name}`}><td colSpan={3} className="muted">Older week: click View to see it.</td></tr>);
+      else if (!f.blogs.length) rows.push(<tr key={`e-${f.name}`}><td colSpan={3} className="muted">No blogs in this file.</td></tr>);
+      else {
+        for (const b of f.blogs) {
+          const open = () => setBlogView({ name: f.name, n: b.n });
+          rows.push(
+            <tr
+              key={`${f.name}-${b.n}`} className="click-row" tabIndex={0} onClick={open}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+            >
+              <td className="nowrap">{b.publishDate ? fmtDay(b.publishDate) : <span className="muted">No date</span>}</td>
+              <td className="name">
+                <div className="ellip wide">{b.topic || b.id || `Blog #${b.n}`}</div>
+                {!b.hasContent && <Badge text="No content" tone="amber" />}
+              </td>
+              <td className="muted">{b.category || '—'}</td>
+            </tr>,
+          );
+        }
+      }
+    }
     body = (
       <div className="table-wrap">
         <table>
-          <thead><tr><th>File</th><th>Uploaded</th><th>Size</th><th className="view" /></tr></thead>
-          <tbody>
-            {files.items.map((f) => (
-              <tr key={f.name}>
-                <td className="mono">{f.name}</td>
-                <td className="nowrap">{fmtDate(f.updatedAt)}</td>
-                <td className="muted">{f.size == null ? '—' : `${Math.max(1, Math.round(f.size / 1024))} KB`}</td>
-                <td className="view nowrap">
-                  <button className="btn small-btn" type="button" disabled={opening === f.name} onClick={() => onView(f.name)}>
-                    {opening === f.name ? 'Opening…' : 'View'}
-                  </button>{' '}
-                  <button className="btn small-btn" type="button" onClick={() => onDownload(f.name)}>Download</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
+          <thead><tr><th>Date</th><th>Blog</th><th>Category</th></tr></thead>
+          <tbody>{rows}</tbody>
         </table>
       </div>
     );
@@ -276,24 +415,30 @@ function WeeklyFilesCard({ admin }) {
   return (
     <div className="card">
       <CardHead icon="calendar" title="Weekly Blog Files" />
+      <p className="muted small card-note">The week&apos;s blogs, saved as one JSON file in Supabase Storage for the publishing agent.</p>
       {admin && (
         <div className="plan-upload">
           <div className="row week-pick">
-            <select className="select" value={week} onChange={(e) => setWeek(e.target.value)} disabled={busy} aria-label="Week">
+            <select
+              className="select" value={week} disabled={busy} aria-label="Week"
+              onChange={(e) => { setWeek(e.target.value); setPreview(null); }}
+            >
               {weeks.map((w) => <option key={w.week} value={w.week}>{w.label}</option>)}
             </select>
             <input ref={input} type="file" accept="application/json,.json" hidden onChange={onFile} />
             <button className="btn outline" type="button" disabled={busy} onClick={() => input.current?.click()}>
-              <Icon name="doc" /> {busy ? 'Uploading…' : 'Upload week JSON'}
+              <Icon name="doc" /> Upload week JSON
             </button>
           </div>
           <div className="muted small">Saved in Supabase Storage as <span className="mono">{chosen.fileName}</span></div>
           {msg.text && <div className="auth-msg" role="alert" aria-live="polite" data-tone={msg.tone}>{msg.text}</div>}
+          {preview && <UploadPreview preview={preview} busy={busy} onSave={onSave} onCancel={() => setPreview(null)} />}
         </div>
       )}
       {body}
       {confirmDialog}
       {viewing && <FileViewer file={viewing} onClose={() => setViewing(null)} />}
+      {blogView && <BlogViewer name={blogView.name} n={blogView.n} onClose={() => setBlogView(null)} />}
     </div>
   );
 }
@@ -398,7 +543,7 @@ export default function BlogsView() {
   const posted = data.posted ?? 0; // across all posts, not just this page
   return (
     <main className="page">
-      <div className="page-head"><h1 className="page-title">Blogs</h1><p className="muted">The blog plan by date, and every blog written so far.</p></div>
+      <div className="page-head"><h1 className="page-title">Blogs</h1><p className="muted">The weekly blog files with which blog goes out on which day, the blog plan, and every blog written so far.</p></div>
       <div className="stack-v">
         <WeeklyFilesCard admin={admin} />
         <BlogPlanCard admin={admin} />

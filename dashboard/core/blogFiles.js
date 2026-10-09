@@ -3,7 +3,8 @@ import { authFetch } from './auth';
 
 const PATH = '/api/blogs/weekly-files';
 
-// -> [{ name: '12_10_26-17_10_26.json', size, updatedAt }] newest week first
+// -> [{ name: '12_10_26-17_10_26.json', size, updatedAt, blogs: [{ id, topic, category, publishDate, ... }] | null,
+//       problem }] newest week first (blogs without their content; null for older weeks)
 export const listWeeklyFiles = () => authFetch(PATH);
 
 // -> { name, text }
@@ -18,6 +19,9 @@ export const uploadWeeklyFile = (week, text, replace = false) => authFetch(PATH,
 const ymd = (d) => [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
 const ddmmyy = (d) => [d.getDate(), d.getMonth() + 1, d.getFullYear() % 100].map((n) => String(n).padStart(2, '0')).join('_');
 const short = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+// The Monday of a file's week: '12_10_26-17_10_26.json' -> '2026-10-12'.
+export const fileMonday = (name) => { const [d, m, y] = name.slice(0, 8).split('_'); return `20${y}-${m}-${d}`; };
 
 // This week and the next few, Monday to Saturday: [{ week: 'YYYY-MM-DD', label, fileName }].
 export function weekChoices(count = 5, today = new Date()) {

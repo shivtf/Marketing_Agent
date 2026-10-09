@@ -1,15 +1,18 @@
 // Weekly blog files: the JSON for one week (Monday to Saturday), stored as is in Supabase Storage, bucket
-// "blog-plans", named by its week, e.g. 12_10_26-17_10_26.json. Nothing here reads the blogs inside; another
-// backend picks the file up from the bucket.
-//   GET                 -> [{ name, size, updatedAt }] newest week first (any signed-in user)
+// "blog-plans", named by its week, e.g. 12_10_26-17_10_26.json. Another backend picks the file up from the bucket;
+// here the blogs inside are only read to show which blog goes out on which day (core/weeklyBlogs.js).
+//   GET                 -> [{ name, size, updatedAt, blogs, problem }] newest week first (any signed-in user).
+//                          `blogs` (no content) for the newest SCHEDULE_WEEKS files, null for older ones.
 //   GET ?name=<file>    -> { name, text } the file itself (any signed-in user)
 //   POST { week, text, replace } -> { name, replaced } (admins; week = that week's Monday, "YYYY-MM-DD")
 import { adminClient, getCaller, requireAdmin, fail, handle } from '@/core/server/supabaseAdmin';
+import { readBlogs } from '@/core/weeklyBlogs';
 
 export const dynamic = 'force-dynamic';
 
 const BUCKET = 'blog-plans';
 const MAX_BYTES = 5 * 1024 * 1024;
+const SCHEDULE_WEEKS = 12; // newest files read for the schedule; older ones are listed only
 const NAME = /^\d{2}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.json$/;
 
 const ddmmyy = (d) => [d.getUTCDate(), d.getUTCMonth() + 1, d.getUTCFullYear() % 100].map((n) => String(n).padStart(2, '0')).join('_');
@@ -46,12 +49,31 @@ async function listFiles(bucket) {
     .sort((a, b) => weekKey(b.name).localeCompare(weekKey(a.name)));
 }
 
+// The blogs in one file, without their text (the schedule only needs dates and topics).
+async function schedule(bucket, name) {
+  const { data, error } = await bucket.download(name);
+  if (error) return { blogs: null, problem: 'Could not read the file.' };
+  let json;
+  try {
+    json = JSON.parse(await data.text());
+  } catch {
+    return { blogs: null, problem: 'The file is not valid JSON.' };
+  }
+  const read = readBlogs(json);
+  if (read.error) return { blogs: null, problem: read.error };
+  return { blogs: read.blogs.map(({ content, ...b }) => ({ ...b, hasContent: !!content.trim() })), problem: null };
+}
+
 export const GET = handle(async (request) => {
   const { error } = await getCaller(request);
   if (error) return error;
   const bucket = await storage();
   const name = new URL(request.url).searchParams.get('name');
-  if (name === null) return Response.json(await listFiles(bucket));
+  if (name === null) {
+    const files = await listFiles(bucket);
+    const read = await Promise.all(files.slice(0, SCHEDULE_WEEKS).map((f) => schedule(bucket, f.name)));
+    return Response.json(files.map((f, i) => ({ ...f, ...(read[i] || { blogs: null, problem: null }) })));
+  }
   if (!NAME.test(name)) return fail('Unknown file.', 404);
   const { data, error: err } = await bucket.download(name);
   if (err) return fail('File not found.', 404);

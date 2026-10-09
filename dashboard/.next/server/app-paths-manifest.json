@@ -1,4 +1,5 @@
 {
+  "/api/blogs/weekly-files/route": "app/api/blogs/weekly-files/route.js",
   "/login/page": "app/login/page.js",
   "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
   "/(app)/blogs/page": "app/(app)/blogs/page.js"
