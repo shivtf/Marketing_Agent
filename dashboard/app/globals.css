@@ -345,6 +345,8 @@ dialog.confirm::backdrop { background: rgba(20, 22, 43, .35); backdrop-filter: b
 .plan-issues.warn-list { color: var(--amber); }
 .plan-actions { align-items: center; flex-wrap: wrap; }
 .plan-stats { flex-wrap: wrap; }
+.week-pick { flex-wrap: wrap; align-items: center; }
+.week-pick .select { height: 38px; max-width: 100%; }
 .next-box { max-width: 320px; }
 tr.week-row th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); background: var(--row-hover); padding: 8px 12px; }
 .ellip.struck { text-decoration: line-through; color: var(--muted); }
