@@ -31,6 +31,9 @@ const ICONS = {
   close: stroke('<path d="M6 6l12 12M18 6 6 18"/>'),
   ext: stroke('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>', 16),
   alert: stroke('<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>', 24),
+  plus: stroke('<path d="M12 5v14M5 12h14"/>', 18),
+  edit: stroke('<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="m14 7 3 3"/>', 16),
+  trash: stroke('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>', 16),
 };
 ICONS.LinkedIn = ICONS.linkedin; // blog site name from the backend
 
