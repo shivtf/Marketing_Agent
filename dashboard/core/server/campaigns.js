@@ -56,6 +56,9 @@ export const toCampaign = (r) => ({
 
 // A Supabase error -> a clear Response. The usual first-time problem is the table not existing yet.
 export function dbError(err, doing) {
+  if (/deleted_at/.test(err?.message || '')) {
+    return fail('The campaign table has no deleted_at column yet. Run dashboardbackend/migrations/004_campaign_soft_delete.sql in the Supabase SQL editor.', 500);
+  }
   if (/campaign/.test(err?.message || '') && /(does not exist|could not find|schema cache)/i.test(err.message)) {
     return fail('The campaign table does not exist yet. Run dashboardbackend/migrations/003_campaign.sql in the Supabase SQL editor.', 500);
   }

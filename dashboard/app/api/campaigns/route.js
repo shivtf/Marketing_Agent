@@ -1,6 +1,6 @@
 // Campaigns (table public.campaign).
 //   GET  -> [{ id, campaignName, campaignDetail, startDate, endDate, isActive, createdAt, updatedAt }] newest start
-//           date first (any signed-in user)
+//           date first, deleted ones left out (any signed-in user)
 //   POST { campaignName, campaignDetail, startDate, endDate, isActive } -> the new campaign (admins)
 import { adminClient, getCaller, requireAdmin, handle } from '@/core/server/supabaseAdmin';
 import { TABLE, checkCampaign, toCampaign, dbError } from '@/core/server/campaigns';
@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export const GET = handle(async (request) => {
   const { error } = await getCaller(request);
   if (error) return error;
-  const { data, error: err } = await adminClient().from(TABLE).select('*')
+  const { data, error: err } = await adminClient().from(TABLE).select('*').is('deleted_at', null)
     .order('start_date', { ascending: false }).order('created_at', { ascending: false });
   if (err) return dbError(err, 'load the campaigns');
   return Response.json(data.map(toCampaign));

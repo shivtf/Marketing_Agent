@@ -26,11 +26,6 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(app)/dashboard/page.js"
     ],
-    "/login/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/login/page.js"
-    ],
     "/(app)/history/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -41,40 +36,15 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(app)/campaign/page.js"
     ],
-    "/(app)/profile/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(app)/profile/page.js"
-    ],
-    "/(app)/positive-leads/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(app)/positive-leads/page.js"
-    ],
-    "/(app)/blogs/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(app)/blogs/page.js"
-    ],
-    "/api/blogs/weekly-files/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/blogs/weekly-files/route.js"
-    ],
     "/api/campaigns/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/campaigns/route.js"
     ],
-    "/(app)/users/page": [
+    "/api/campaigns/[id]/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(app)/users/page.js"
-    ],
-    "/api/admin/users/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/admin/users/route.js"
+      "static/chunks/app/api/campaigns/[id]/route.js"
     ]
   }
 }

@@ -254,7 +254,7 @@ export default function CampaignsView() {
   async function onDelete(c) {
     const ok = await confirm({
       title: `Delete "${c.campaignName}"?`,
-      message: 'It is removed from Supabase for good. To keep it but switch it off, make it inactive instead.',
+      message: 'It is hidden from the dashboard but kept in Supabase (marked deleted). To keep it showing but switch it off, make it inactive instead.',
       confirmLabel: 'Delete',
       danger: true,
     });
