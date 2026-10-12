@@ -33,6 +33,17 @@ const ICONS = {
   alert: stroke('<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>', 24),
   plus: stroke('<path d="M12 5v14M5 12h14"/>', 18),
   edit: stroke('<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="m14 7 3 3"/>', 16),
+  home: stroke('<path d="M3.5 10.5 12 4l8.5 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-4.5v-6h-5v6H5A1.5 1.5 0 0 1 3.5 19z"/>'),
+  user: stroke('<circle cx="12" cy="8" r="4"/><path d="M4 20.5a8 8 0 0 1 16 0"/>'),
+  megaphone: stroke('<path d="M3.5 10v4a1 1 0 0 0 1 1H7l7 4.5v-15L7 9H4.5a1 1 0 0 0-1 1z"/><path d="M18 9a4 4 0 0 1 0 6M8 15l1.5 5"/>'),
+  logout: stroke('<path d="M9 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3M15 16l4-4-4-4M19 12H9"/>', 18),
+  chart: stroke('<path d="M4 4v16h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/>'),
+  search: stroke('<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>'),
+  building: stroke('<path d="M4 21V5a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 15 5v16M15 9h3.5A1.5 1.5 0 0 1 20 10.5V21M2.5 21h19M8 7.5h3M8 11h3M8 14.5h3"/>'),
+  briefcase: stroke('<rect x="3" y="7" width="18" height="13" rx="2.5"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3 12.5h18"/>'),
+  funnel: stroke('<path d="M3.5 4.5h17l-6.5 8v6l-4 2v-8z"/>'),
+  stack: stroke('<ellipse cx="12" cy="6" rx="7.5" ry="2.8"/><path d="M4.5 6v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V6M4.5 12v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6"/>'),
+  chevD: stroke('<path d="m6 9 6 6 6-6"/>', 16),
   trash: stroke('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>', 16),
 };
 ICONS.LinkedIn = ICONS.linkedin; // blog site name from the backend

@@ -1,221 +1,293 @@
 'use client';
-// Page 1: Agent Control + Leads Overview.
-import { useState } from 'react';
+// Page 1, laid out like the design mock: a greeting; lead stat cards, the Lead Pipeline and Recent Leads on the left;
+// Agent Control and Leads by Source on the right. Everything shown comes from /agent, /leads/stats and /leads.
+import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { OpenRow } from './OpenRow';
-import { useList, useSection, useUpdateSection } from './DataProvider';
-import { Badge, StatusBadge, SourceCell, Skeleton, ErrorBox, CardHead, ViewCell, DataTable, StatCards, Pager } from './ui';
-import * as api from '@/core/api';
-import { pad, fmtDate, sourceLabel } from '@/core/format';
+import { useList, useSection } from './DataProvider';
+import { StatusBadge, Skeleton, ErrorBox, DataTable, Pager } from './ui';
+import { describeAgent, EmailModeBadge, OUTCOMES, useAgentAction } from './agent';
+import { getSession } from '@/core/auth';
+import { fmtDate, sourceLabel, toneOf } from '@/core/format';
 
-// ---------- Agent Control ----------
-// There is one marketing agent, on the office machine (approvals happen in Slack). Start/Stop are requests: the agent
-// applies them within about 5 s (stopping can take up to 30 s), so the status is polled until inSync (DataProvider).
+const pct = (n, total) => (total ? Math.round((n / total) * 100) : 0);
+// "Oct 12, 9:36 AM": short enough for one line in the narrow Agent Control card.
+const shortTime = (iso) => (iso ? `${fmtDate(iso, 'date').replace(/, \d{4}$/, '')}, ${fmtDate(iso, 'table').split(' ').slice(-2).join(' ')}` : '—');
 
-const STEPS = {
-  inbox: 'Reading the inbox', replies: 'Classifying replies', send: 'Sending approved emails',
-  followups: 'Drafting follow-ups', leads: 'Finding leads', blog: 'Writing the blog post',
-};
-const OUTCOMES = { succeeded: 'Succeeded', failed: 'Failed', stopped: 'Stopped' };
-
-// Badge, note and button for the pipeline status (pipeline-api.md, "Suggested UI").
-function describeAgent(a) {
-  const wantsRun = a.desiredState === 'running';
-  if (!a.online) {
-    return { badge: 'Offline', wantsRun, note: `Office machine offline.${wantsRun ? ' It will start when it comes back.' : ''}` };
-  }
-  if (!a.inSync) {
-    return {
-      badge: wantsRun ? 'Starting…' : 'Stopping…', wantsRun, busy: true,
-      note: wantsRun ? 'Starting within a few seconds.' : 'Stopping after the current step (up to 30 s).',
-    };
-  }
-  if (a.state === 'running') {
-    const step = a.currentPass && (STEPS[a.currentPass.step] || a.currentPass.step);
-    const note = step ? `${step}…` : a.nextPassAt ? `Next pass at ${fmtDate(a.nextPassAt, 'table')}.` : 'Running.';
-    return { badge: 'Running', wantsRun, note };
-  }
-  return { badge: 'Stopped', wantsRun, note: 'Nothing is searched, drafted or sent until you press Start.' };
-}
-
-// Whether real emails go out: the most important fact on the card, so it gets a badge next to the state.
-function EmailModeBadge({ agent }) {
-  if (agent.sendingEnabled === false) return <Badge text="Sending off" tone="gray" title="Approved emails are not sent at all." />;
-  if (agent.testMode) return <Badge text="Test mode" tone="blue" title="Every email goes to the test inbox, not to the real contact." />;
-  if (agent.testMode === false) return <Badge text="Live emails" tone="red" title="Approved emails go to the real contacts." />;
-  return null;
-}
-
-// When the agent started/stopped (stateSince), who pressed the button and when (requestedAt), and the last run.
-// A run's own times are not the stop time: stopping mid-run ends a run that may have started long before.
-function AgentNote({ agent, note }) {
-  const last = agent.lastPass;
-  const running = agent.desiredState === 'running';
-  const since = agent.inSync && agent.stateSince
-    && (agent.state === 'running' ? `Running since ${fmtDate(agent.stateSince, 'table')}`
-      : agent.state === 'stopped' ? `Stopped at ${fmtDate(agent.stateSince, 'table')}` : null);
-  // Who pressed the button: their name (agent.py looks it up), else what the API recorded ("dashboard:<email>",
-  // or a name when started/stopped from the agent's CLI).
-  const who = agent.requestedByName || agent.requestedBy?.replace(/^dashboard:/, '');
-  const by = who && [
-    `${running ? 'Started' : 'Stopped'} by ${who}`,
-    agent.requestedAt && fmtDate(agent.requestedAt, 'table'),
-  ].filter(Boolean).join(' · ');
-  const run = last && `Last run: ${OUTCOMES[last.outcome] || last.outcome} · ${
-    last.finishedAt ? `ended ${fmtDate(last.finishedAt, 'table')}` : `started ${fmtDate(last.startedAt, 'table')}`}`;
-  const details = [since, by, run].filter(Boolean);
+// ---------- Greeting ----------
+function Greeting() {
+  const [name, setName] = useState('');
+  useEffect(() => {
+    getSession().then((s) => setName(s?.user?.user_metadata?.name?.split(' ')[0] || s?.user?.email?.split('@')[0] || ''));
+  }, []);
+  const h = new Date().getHours();
+  const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
   return (
-    <div className="small agent-note">
-      <div>{note}</div>
-      {details.map((l) => <div key={l} className="muted">{l}</div>)}
+    <div className="hero">
+      <div className="hero-text">
+        <h1 className="hero-title">Good {part}{name && `, ${name}`} <span className="hero-wave" aria-hidden="true">👋</span></h1>
+        <p className="hero-sub">Your marketing agent is finding potential customers and creating outreach opportunities.</p>
+      </div>
+      <div className="hero-art" aria-hidden="true">
+        <svg viewBox="0 0 460 120" preserveAspectRatio="xMaxYMax meet">
+          <defs>
+            <linearGradient id="hero-far" x1="0" y1="0" x2="0" y2="1"><stop offset="0" className="hero-far-a" /><stop offset="1" className="hero-far-b" /></linearGradient>
+            <linearGradient id="hero-near" x1="0" y1="0" x2="0" y2="1"><stop offset="0" className="hero-near-a" /><stop offset="1" className="hero-near-b" /></linearGradient>
+          </defs>
+          <circle cx="250" cy="36" r="15" className="hero-sun" />
+          {/* Dark mode: a crescent moon and a few stars in place of the sun. */}
+          <g className="hero-night">
+            <path d="M256 22 a15 15 0 1 0 8 26 a12 12 0 1 1 -8 -26 z" className="hero-moon" />
+            <circle cx="200" cy="24" r="1.4" /><circle cx="300" cy="16" r="1.2" /><circle cx="330" cy="44" r="1" />
+            <circle cx="170" cy="46" r="1" /><circle cx="226" cy="10" r="1" />
+          </g>
+          <path d="M20 120 C70 104 110 64 150 54 C176 48 190 72 212 62 C242 48 262 18 300 30 C330 40 344 78 376 84 C404 89 430 100 460 108 V120 Z" fill="url(#hero-far)" />
+          <path d="M0 120 C50 110 82 92 124 96 C166 100 186 82 228 88 C270 94 292 108 334 102 C376 96 410 104 460 114 V120 Z" fill="url(#hero-near)" />
+          <g className="hero-tree"><path d="M178 92 l8 -24 l8 24 z" /><path d="M181 82 l5 -16 l5 16 z" /><rect x="185" y="91" width="2" height="7" /></g>
+          <g className="hero-tree"><path d="M198 95 l6 -16 l6 16 z" /><rect x="203" y="94" width="2" height="6" /></g>
+          <g className="hero-tree"><path d="M372 98 l6 -18 l6 18 z" /><rect x="377" y="97" width="2" height="6" /></g>
+        </svg>
+        <p className="hero-quote">“Find opportunities<br />Build relationships<br />Create impact.”</p>
+      </div>
     </div>
   );
 }
 
-function AgentControl() {
-  const { status, data, reload } = useSection('agent');
-  const update = useUpdateSection();
-  const [acting, setActing] = useState(false);
-  const [error, setError] = useState('');
+// ---------- Stat cards ----------
+const KPIS = [
+  { label: 'Total Leads', icon: 'building', tone: 'blue', value: (d) => d.total, hint: () => 'All leads found' },
+  { label: 'Emails Sent', icon: 'mail', tone: 'red', value: (d, sent) => sent, hint: (d, sent) => `${pct(sent, d.total)}% of leads` },
+  { label: 'Awaiting Reply', icon: 'clock', tone: 'green', value: (d) => d.awaiting, hint: (d, sent) => `${pct(d.awaiting, sent)}% of emailed` },
+  { label: 'Responses', icon: 'reply', tone: 'lavender', value: (d) => d.responded, hint: (d, sent) => `${pct(d.responded, sent)}% of emailed` },
+];
 
-  async function act(action) {
-    setError('');
-    setActing(true);
-    try {
-      const fresh = await (action === 'start' ? api.startAgent() : api.stopAgent());
-      update('agent', () => fresh); // not in sync yet: DataProvider polls until it is
-    } catch (err) {
-      setError(`Couldn't ${action} the agent: ${err.message}`);
-    } finally {
-      setActing(false);
-    }
-  }
-
-  let card;
-  if (status === 'loading') card = <div className="card"><Skeleton rows={3} /></div>;
-  else if (status === 'error') card = <div className="card"><ErrorBox what="the agent status" onRetry={reload} /></div>;
-  else {
-    const v = describeAgent(data);
-    const disabled = acting || v.busy;
-    card = (
-      <div className="card pipe agent-card">
-        <div className="card-head">
-          <div className="tile"><Icon name="bolt" /></div>
-          <div>
-            <div className="card-title">Marketing Agent</div>
-            <div className="badges"><StatusBadge text={v.badge} /><EmailModeBadge agent={data} /></div>
+function StatRow({ stats }) {
+  const { status, data, reload } = stats;
+  const sent = data ? data.total - data.notSent : 0; // every lead we emailed: sent, responded or bounced
+  return (
+    <div className="kpis">
+      {KPIS.map((k) => (
+        <div key={k.label} className="card kpi">
+          <div className={`kpi-tile ${k.tone}`}><Icon name={k.icon} /></div>
+          <div className="kpi-body">
+            <div className="kpi-label">{k.label}</div>
+            {status === 'error' && <button className="btn small-btn" onClick={reload}>Retry</button>}
+            {status === 'loading' && <div className="skel" style={{ height: 30, width: 70, marginTop: 6 }} />}
+            {status === 'ready' && (
+              <>
+                <div className="kpi-value">{k.value(data, sent)}</div>
+                <div className={`kpi-hint ${k.tone}`}>{k.hint(data, sent)}</div>
+              </>
+            )}
           </div>
         </div>
-        <AgentNote agent={data} note={v.note} />
-        <div className="row">
-          {v.wantsRun
-            ? <button className="btn outline" disabled={disabled} onClick={() => act('stop')}><Icon name="pause" /> Stop</button>
-            : <button className="btn primary" disabled={disabled} onClick={() => act('start')}><Icon name="play" /> Start</button>}
-        </div>
-      </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Lead Pipeline: where every lead stands, as a share of all leads ----------
+function Pipeline({ stats }) {
+  const { status, data, reload } = stats;
+  let body;
+  if (status === 'loading') body = <Skeleton rows={3} />;
+  else if (status === 'error') body = <ErrorBox what="the lead pipeline" onRetry={reload} />;
+  else {
+    const stages = [
+      { label: 'Found', icon: 'building', tone: 'blue', n: data.total },
+      { label: 'Not Sent', icon: 'funnel', tone: 'slate', n: data.notSent },
+      { label: 'Emailed', icon: 'send', tone: 'green', n: data.total - data.notSent },
+      { label: 'Awaiting', icon: 'mail', tone: 'amber', n: data.awaiting },
+      { label: 'Responded', icon: 'reply', tone: 'lavender', n: data.responded },
+    ];
+    body = (
+      <ol className="stages">
+        {stages.map((s, i) => (
+          <li key={s.label} className="stage-wrap">
+            {i > 0 && <span className="stage-arrow" aria-hidden="true"><Icon name="arrow" /></span>}
+            <div className={`stage ${s.tone}`}>
+              <div className="stage-top">
+                <span className="stage-icon"><Icon name={s.icon} /></span>
+                <div>
+                  <div className="stage-label">{s.label}</div>
+                  <div className="stage-n">{s.n}</div>
+                </div>
+              </div>
+              <div className="stage-foot">
+                <span className="stage-track" aria-hidden="true"><span style={{ width: `${pct(s.n, data.total)}%` }} /></span>
+                <span className="stage-pct">{pct(s.n, data.total)}%</span>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ol>
     );
   }
-
   return (
-    <section aria-label="Agent control">
-      <div className="section-head"><h2 className="section-title">Agent Control</h2></div>
-      {error && <div className="notice">{error}</div>}
-      {card}
+    <section className="card">
+      <h2 className="panel-title"><Icon name="funnel" /> Lead Pipeline</h2>
+      {body}
     </section>
   );
 }
 
-// ---------- Leads Overview: stat cards + source breakdown ----------
-const STATS = [
-  { key: 'total', label: 'Total Leads', icon: 'users' },
-  { key: 'awaiting', label: 'Awaiting Response', icon: 'clock', tone: 'lavender' },
-  { key: 'responded', label: 'Responded', icon: 'reply', tone: 'green' },
-];
+// ---------- Recent Leads: every lead, newest first, one page at a time ----------
+const LOGO_TONES = ['blue', 'green', 'red', 'amber', 'lavender', 'slate'];
+const logoTone = (name = '') => LOGO_TONES[[...name].reduce((h, c) => h + c.charCodeAt(0), 0) % LOGO_TONES.length];
 
-function LeadStatCards({ stats }) {
-  const { status, data, reload } = stats;
-  return <StatCards items={STATS.map((s) => ({ ...s, value: data?.[s.key], status, onRetry: reload }))} />;
-}
-
-// One bar per source the agent actually found leads on, most leads first; bar length = share of all leads.
-// A single colour: the label next to each bar says which source it is, so any number of sources fits.
-function SourceBreakdown({ stats }) {
-  const { status, data, reload } = stats;
-  let body;
-  if (status === 'loading') body = <Skeleton rows={3} />;
-  else if (status === 'error') body = <ErrorBox what="lead sources" onRetry={reload} />;
-  else {
-    const entries = Object.entries(data.bySource); // backend sends most leads first
-    const total = entries.reduce((sum, [, n]) => sum + n, 0);
-    body = !total ? <div className="muted small">No leads yet.</div> : (
-      <ul className="source-bars">
-        {entries.map(([k, n]) => {
-          const pct = Math.round((n / total) * 100);
-          return (
-            <li key={k} className="source-bar" title={`${sourceLabel(k)}: ${n} lead${n === 1 ? '' : 's'} (${pct}%)`}>
-              <span className="source-name">{sourceLabel(k)}</span>
-              <span className="source-track" aria-hidden="true"><span className="source-fill" style={{ width: `${(n / total) * 100}%` }} /></span>
-              <span className="source-count">{n}<span className="muted"> · {pct}%</span></span>
-            </li>
-          );
-        })}
-      </ul>
-    );
-  }
-  return <div className="card"><CardHead icon="users" title="Leads by Source" />{body}</div>;
-}
-
-// ---------- Leads table ----------
-// Every lead, newest first, one page at a time: the company, the email we found and when the lead came in.
-// What the company does is in the lead drawer.
-function LeadsTable() {
+function RecentLeads() {
   const leads = useList('leads');
   const { status, data, reload, fetching } = leads;
   return (
-    <div className="card">
+    <section className="card leads-card">
+      <h2 className="panel-title"><Icon name="stack" /> Recent Leads</h2>
       <DataTable
         status={status}
-        head={(
-          <>
-            <th>#</th><th>Company</th><th>Email</th><th>Source</th><th>Status</th><th>Added</th><th className="view">View</th>
-          </>
-        )}
+        head={<><th>Company</th><th className="email">Email</th><th>Source</th><th>Status</th><th>Date Added</th><th className="actions">Actions</th></>}
         busy={fetching}
         scrollKey={data.page}
-        rows={data.items.map((l) => (
-          <OpenRow key={l.id} kind="lead" id={l.id}>
-            <td className="num">{pad(l.number)}</td>
-            <td className="name">{l.company || 'Unknown company'}</td>
-            <td className="muted">{l.email || '—'}</td>
-            <td><SourceCell source={l.source} /></td>
-            <td><StatusBadge text={l.status} /></td>
-            <td className="muted nowrap">{fmtDate(l.addedAt, 'table')}</td>
-            <ViewCell />
-          </OpenRow>
-        ))}
+        rows={data.items.map((l) => {
+          const company = l.company || 'Unknown company';
+          return (
+            <OpenRow key={l.id} kind="lead" id={l.id}>
+              <td>
+                <div className="co">
+                  <span className={`co-logo ${logoTone(company)}`} aria-hidden="true">{company[0].toUpperCase()}</span>
+                  <span className="co-text">
+                    <span className="name">{company}</span>
+                    <span className="co-email muted small">{l.email || '—'}</span>
+                  </span>
+                </div>
+              </td>
+              <td className="muted email" title={l.email || undefined}>{l.email || '—'}</td>
+              <td><span className="pill">{sourceLabel(l.source)}</span></td>
+              <td><StatusBadge text={l.status} /></td>
+              <td className="muted nowrap" title={fmtDate(l.addedAt)}>{fmtDate(l.addedAt, 'date')}</td>
+              <td className="actions">
+                {l.email && (
+                  <a className="row-icon" href={`mailto:${l.email}`} aria-label={`Email ${company}`} onClick={(e) => e.stopPropagation()}>
+                    <Icon name="mail" />
+                  </a>
+                )}
+                <span className="row-icon" aria-label="View"><Icon name="eye" /></span>
+              </td>
+            </OpenRow>
+          );
+        })}
         emptyIcon="users"
         emptyText="No leads yet"
         what="leads"
         onRetry={reload}
       />
       <Pager list={leads} />
-    </div>
+    </section>
+  );
+}
+
+// ---------- Agent Control ----------
+function AgentControl() {
+  const { status, data, reload } = useSection('agent');
+  const { act, acting, error } = useAgentAction();
+
+  let body;
+  if (status === 'loading') body = <Skeleton rows={4} />;
+  else if (status === 'error') body = <ErrorBox what="the agent status" onRetry={reload} />;
+  else {
+    const v = describeAgent(data);
+    const last = data.lastPass;
+    const who = data.requestedByName || data.requestedBy?.replace(/^dashboard:/, '');
+    const since = data.inSync && data.stateSince && (data.state === 'running' || data.state === 'stopped');
+    const rows = [
+      ['Current task', v.note],
+      since && [data.state === 'running' ? 'Running since' : 'Stopped at', shortTime(data.stateSince)],
+      who && [v.wantsRun ? 'Started by' : 'Stopped by', who],
+      last && ['Last run', shortTime(last.finishedAt || last.startedAt)],
+      last && ['Result', OUTCOMES[last.outcome] || last.outcome],
+    ].filter(Boolean);
+    body = (
+      <>
+        <div className="agent-state">
+          <span className={`agent-dot ${toneOf(v.badge)}`} aria-hidden="true" />
+          <span className={`agent-word ${toneOf(v.badge)}`}>{v.badge}</span>
+          <EmailModeBadge agent={data} />
+        </div>
+        <button
+          className="btn primary agent-btn"
+          disabled={acting || v.busy}
+          onClick={() => act(v.wantsRun ? 'stop' : 'start')}
+        >
+          <Icon name={v.wantsRun ? 'pause' : 'play'} /> {v.wantsRun ? 'Stop Agent' : 'Start Agent'}
+        </button>
+        <dl className="kv">
+          {rows.map(([k, val]) => <div key={k} className="kv-row"><dt>{k}</dt><dd>{val}</dd></div>)}
+        </dl>
+      </>
+    );
+  }
+  return (
+    <section className="card agent-panel" aria-label="Agent control">
+      <h2 className="panel-title"><Icon name="bolt" /> Agent Control</h2>
+      {error && <div className="notice">{error}</div>}
+      {body}
+    </section>
+  );
+}
+
+// ---------- Leads by Source: one row per source, most leads first ----------
+const SOURCE_TONES = ['blue', 'green', 'lavender', 'amber', 'red', 'slate'];
+const sourceIcon = (k) => (k === 'search' ? 'search' : k === 'company_search' ? 'building' : k === 'feed' ? 'doc' : k === 'other' ? 'bolt' : 'briefcase');
+
+function SourceList({ stats }) {
+  const { status, data, reload } = stats;
+  let body;
+  if (status === 'loading') body = <Skeleton rows={4} />;
+  else if (status === 'error') body = <ErrorBox what="lead sources" onRetry={reload} />;
+  else {
+    const entries = Object.entries(data.bySource); // backend sends most leads first
+    const total = entries.reduce((sum, [, n]) => sum + n, 0);
+    body = !total ? <div className="muted small">No leads yet.</div> : (
+      <ul className="feed">
+        {entries.map(([k, n], i) => {
+          const tone = SOURCE_TONES[i % SOURCE_TONES.length];
+          return (
+            <li key={k} className={`feed-item ${tone}`}>
+              <span className="feed-dot" aria-hidden="true" />
+              <span className="feed-icon"><Icon name={sourceIcon(k)} /></span>
+              <span className="feed-text">
+                <span className="feed-title">{sourceLabel(k)}</span>
+                <span className="feed-sub">{pct(n, total)}% of leads</span>
+              </span>
+              <span className="feed-count">{n}</span>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+  return (
+    <section className="card">
+      <h2 className="panel-title"><Icon name="chart" /> Leads by Source</h2>
+      {body}
+    </section>
   );
 }
 
 export default function DashboardView() {
   const stats = useSection('stats');
   return (
-    <main className="page">
-      <AgentControl />
-      <section aria-label="Leads overview">
-        <div className="section-head"><h2 className="section-title">Leads Overview</h2></div>
-        <div className="stack-v">
-          <LeadStatCards stats={stats} />
-          <div><SourceBreakdown stats={stats} /></div>
-          <div><LeadsTable /></div>
+    <main className="page dash">
+      <Greeting />
+      <div className="dash-grid">
+        <div className="dash-main">
+          <StatRow stats={stats} />
+          <Pipeline stats={stats} />
+          <RecentLeads />
         </div>
-      </section>
+        <aside className="dash-side">
+          <AgentControl />
+          <SourceList stats={stats} />
+        </aside>
+      </div>
     </main>
   );
 }
