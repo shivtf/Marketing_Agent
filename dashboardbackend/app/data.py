@@ -47,14 +47,15 @@ select c.id, row_number() over (order by c.collected_at, c.id) as number,
 from contacts c join companies co on co.id = c.company_id
 """
 
+# delivery_status: 'Sent' means the agent sent it without an error (not proof it reached the inbox); 'Failed' = bounced.
 _SENT = """
 select * from (
-  select e.id, row_number() over (order by e.sent_at, e.id) as number, e.contact_id as lead_id,
+  select e.id, row_number() over (order by e.sent_at, e.id) as number, e.contact_id as lead_id, co.name as company,
          e.mailbox as "from", c.email as "to", e.subject, e.sent_at,
-         case e.status when 'sent' then 'Delivered' when 'bounced' then 'Failed' else 'Sent' end
-           as delivery_status,
+         case e.status when 'bounced' then 'Failed' else 'Sent' end as delivery_status,
          (select r.id from replies r where r.email_id = e.id order by r.received_at limit 1) as reply_id
   from emails e join contacts c on c.id = e.contact_id
+  left join companies co on co.id = c.company_id
   where e.status in ('sent', 'bounced') and e.sent_at is not null
 ) s
 """
@@ -64,9 +65,10 @@ select * from (
   select r.id, row_number() over (order by r.received_at, r.id) as number,
          coalesce(c.name, c.email) as sender_name, c.email as sender_email, e.mailbox as "to",
          'Re: ' || coalesce(e.subject, '') as subject, r.received_at, r.email_id as in_reply_to_id,
-         r.label, r.body
+         r.label, r.body, r.contact_id as lead_id, co.name as company
   from replies r
   left join contacts c on c.id = r.contact_id
+  left join companies co on co.id = c.company_id
   left join emails e on e.id = r.email_id
 ) s
 """
@@ -306,10 +308,43 @@ async def lead(lead_id: str) -> dict:
 
 # ---------- Emails ----------
 
+# Search text: matched case-insensitively anywhere in the listed columns (strpos, so % and _ are plain characters).
+Search = Annotated[str | None, Query(max_length=100)]
+SentStatus = Annotated[str | None, Query(pattern="^(sent|failed)$")]
+# A reply's label from the classifier, 'unclassified' (not labelled yet), or 'human' (anything but the automatic
+# out-of-office and bounce messages).
+ReplyLabel = Annotated[
+    str | None, Query(pattern="^(interested|question|not_interested|unsubscribe|ooo|bounce|unclassified|human)$")
+]
+
+
+def _search(columns: tuple[str, ...], q: str | None, conds: list[str], args: list) -> None:
+    """Adds 'q appears in one of `columns`' to conds/args (nothing for an empty q). Columns are constants."""
+    q = (q or "").strip()
+    if q:
+        args.append(q.lower())
+        n = len(args)
+        conds.append("(" + " or ".join(f"strpos(lower(coalesce({c}, '')), ${n}) > 0" for c in columns) + ")")
+
+
+def _where(conds: list[str]) -> str:
+    return f"where {' and '.join(conds)}" if conds else ""
+
 
 @router.get("/emails/sent")
-async def sent_emails(page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
-    return await _page(_SENT, "sent_at desc, id", page, limit)
+async def sent_emails(
+    q: Search = None, status: SentStatus = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
+) -> dict:
+    """One page of sent emails (newest first), searchable by recipient, company and subject, plus `failed`: how many
+    of all sent emails bounced."""
+    conds, args = [], []
+    _search(('"to"', "company", "subject"), q, conds, args)
+    if status:
+        args.append("Failed" if status == "failed" else "Sent")
+        conds.append(f"delivery_status = ${len(args)}")
+    out = await _page(_SENT, "sent_at desc, id", page, limit, _where(conds), tuple(args))
+    out["failed"] = await _value(f"select count(*) from ({_SENT}) s where delivery_status = 'Failed'") or 0  # noqa: S608
+    return out
 
 
 @router.get("/emails/sent/{email_id}")
@@ -323,8 +358,18 @@ async def sent_email(email_id: str) -> dict:
 
 
 @router.get("/emails/replies")
-async def replies(page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
-    out = await _page(_REPLIES, "received_at desc, id", page, limit)
+async def replies(q: Search = None, label: ReplyLabel = None, page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
+    """One page of replies (newest first), searchable by sender, company and subject, filtered by label."""
+    conds, args = [], []
+    _search(("sender_name", "sender_email", "company", "subject"), q, conds, args)
+    if label == "unclassified":
+        conds.append("label is null")
+    elif label == "human":
+        conds.append("coalesce(label, '') not in ('ooo', 'bounce')")
+    elif label:
+        args.append(label)
+        conds.append(f"label = ${len(args)}")
+    out = await _page(_REPLIES, "received_at desc, id", page, limit, _where(conds), tuple(args))
     out["items"] = [_without(r, "body") for r in out["items"]]
     return out
 

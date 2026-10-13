@@ -1,7 +1,6 @@
 {
-  "/api/campaigns/route": "app/api/campaigns/route.js",
   "/(app)/campaign/page": "app/(app)/campaign/page.js",
   "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
-  "/(app)/history/page": "app/(app)/history/page.js",
-  "/(app)/positive-leads/page": "app/(app)/positive-leads/page.js"
+  "/(app)/positive-leads/page": "app/(app)/positive-leads/page.js",
+  "/(app)/history/page": "app/(app)/history/page.js"
 }

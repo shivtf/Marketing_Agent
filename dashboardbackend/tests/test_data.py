@@ -196,3 +196,50 @@ def test_concurrent_first_requests_share_one_pool(monkeypatch):
 
     pools = asyncio.run(five_at_once())
     assert len(created) == 1 and all(p is created[0] for p in pools)
+
+
+# ---------- History: search and filters ----------
+
+
+def test_sent_emails_search_status_and_failed_count(db):
+    calls, answer = db
+    answer.update(rows=[{"id": "e", "number": 1, "deliveryStatus": "Failed"}], value=3)
+    res = client.get("/emails/sent?q=%20Acme%25%20&status=failed&page=2&limit=10", headers=_auth()).json()
+    assert res["failed"] == 3 and res["page"] == 2
+    count_sql, count_args = calls[0]
+    # the search text is a plain argument (lower-cased, trimmed; % is not a wildcard), never part of the SQL
+    assert count_args == ("acme%", "Failed") and "acme" not in count_sql
+    assert "strpos(lower(coalesce(\"to\", '')), $1) > 0" in count_sql and "delivery_status = $2" in count_sql
+    assert calls[1][1] == ("acme%", "Failed", 10, 10)
+    assert "delivery_status = 'Failed'" in calls[2][0]  # failed count is over all sent emails, not the filter
+
+
+def test_sent_emails_without_filters(db):
+    calls, _ = db
+    client.get("/emails/sent", headers=_auth())
+    assert ") t where" not in calls[0][0] and calls[0][1] == ()
+
+
+@pytest.mark.parametrize(("label", "sql", "args"), [
+    ("interested", "label = $1", ("interested",)),
+    ("unclassified", "label is null", ()),
+    ("human", "coalesce(label, '') not in ('ooo', 'bounce')", ()),
+])
+def test_replies_label_filter(db, label, sql, args):
+    calls, _ = db
+    client.get(f"/emails/replies?label={label}", headers=_auth())
+    assert sql in calls[0][0] and calls[0][1] == args
+
+
+def test_replies_search_and_label_together(db):
+    calls, answer = db
+    answer.update(rows=[{"id": "r", "number": 1, "label": "ooo", "body": "away"}], value=1)
+    res = client.get("/emails/replies?q=priya&label=ooo", headers=_auth()).json()
+    assert res["items"] == [{"id": "r", "number": 1, "label": "ooo"}]  # body left out of the list
+    assert calls[0][1] == ("priya", "ooo") and "label = $2" in calls[0][0]
+
+
+def test_history_filters_are_checked(db):
+    assert client.get("/emails/sent?status=delivered", headers=_auth()).status_code == 422
+    assert client.get("/emails/replies?label=spam", headers=_auth()).status_code == 422
+    assert client.get(f"/emails/sent?q={'x' * 101}", headers=_auth()).status_code == 422

@@ -68,9 +68,11 @@ export async function getPositiveLeads() {
 
 // ---------- Emails ----------
 
-export const getSentEmails = ({ page, limit } = {}) => apiFetch(`/emails/sent${qs({ page, limit })}`);
+// q: search text; status: 'sent' | 'failed'. -> { items, total, page, limit, failed } (failed: of all sent emails)
+export const getSentEmails = ({ q, status, page, limit } = {}) => apiFetch(`/emails/sent${qs({ q, status, page, limit })}`);
 export const getSentEmail = (id) => apiFetch(`/emails/sent/${encodeURIComponent(id)}`);
-export const getReplies = ({ page, limit } = {}) => apiFetch(`/emails/replies${qs({ page, limit })}`);
+// q: search text; label: a reply label, 'unclassified' or 'human' (not out-of-office or bounce).
+export const getReplies = ({ q, label, page, limit } = {}) => apiFetch(`/emails/replies${qs({ q, label, page, limit })}`);
 export const getReply = (id) => apiFetch(`/emails/replies/${encodeURIComponent(id)}`);
 
 // ---------- Blogs ----------

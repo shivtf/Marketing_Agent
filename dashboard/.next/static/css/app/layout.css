@@ -219,6 +219,8 @@ td.view svg { display: block; margin-left: auto; }
 .profile-link { margin-top: 4px; }
 .total-block { margin-top: 2px; }
 .total-block .big { font-size: 34px; margin-top: 2px; }
+.history-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0 10px; }
+.history-tools .search-input { flex: 1 1 200px; min-width: 0; }
 .blog-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .blog-top .card-head { margin-bottom: 14px; }
 .blog-top .stats { display: flex; gap: 12px; }
@@ -241,6 +243,7 @@ td.view svg { display: block; margin-left: auto; }
 .drawer-body hr { margin: 20px 0 8px; }
 .meta { margin: 0 0 18px; }
 .action { margin-bottom: 8px; }
+.action .btn + .btn, .action .muted + .btn { margin-top: 8px; }
 .body-title { margin: 26px 0 12px !important; }
 .notes { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; line-height: 1.6; }
 .linked { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }

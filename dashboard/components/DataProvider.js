@@ -23,11 +23,13 @@ const LISTS = {
     status: filter.status === 'all' ? undefined : filter.status,
     source: filter.source === 'all' ? undefined : filter.source,
   }),
-  sent: (page) => api.getSentEmails({ page, limit: PAGE_SIZE }),
-  replies: (page) => api.getReplies({ page, limit: PAGE_SIZE }),
+  sent: (page, f) => api.getSentEmails({ page, limit: PAGE_SIZE, q: f.q, status: f.status === 'all' ? undefined : f.status }),
+  replies: (page, f) => api.getReplies({ page, limit: PAGE_SIZE, q: f.q, label: f.label === 'all' ? undefined : f.label }),
   blogs: (page) => api.getBlogs({ page, limit: PAGE_SIZE }),
 };
 const EMPTY_PAGE = { items: [], total: 0, page: 1, limit: PAGE_SIZE };
+// History search + filters, per list. The search text is already debounced by the page.
+const LIST_FILTERS = { sent: { q: '', status: 'all' }, replies: { q: '', label: 'all' } };
 // Agent status: poll every 3 s while a Start/Stop is being applied, otherwise every 10 s (pipeline-api.md).
 const OPTIONS = {
   agent: { refetchInterval: (q) => (q.state.data && !q.state.data.inSync ? 3000 : 10000) },
@@ -76,15 +78,21 @@ export function DataProvider({ children }) {
   const [filter, setLeadsFilter] = useState({ status: 'all', source: 'all' });
   const [pages, setPages] = useState({ leads: 1, sent: 1, replies: 1, blogs: 1 });
   const [positiveView, setPositiveView] = useState({ q: '', sort: 'followup' });
+  const [listFilters, setListFilters] = useState(LIST_FILTERS);
   // A new lead filter starts again from page 1 (the old page may not exist in the filtered list).
   const setFilter = useCallback((fn) => {
     setLeadsFilter(fn);
     setPages((p) => ({ ...p, leads: 1 }));
   }, []);
   const setPage = useCallback((key, page) => setPages((p) => ({ ...p, [key]: page })), []);
+  // A History list's search / filter (`changes` merged in); a new filter starts again from page 1.
+  const setListFilter = useCallback((key, changes) => {
+    setListFilters((f) => ({ ...f, [key]: { ...f[key], ...changes } }));
+    setPages((p) => ({ ...p, [key]: 1 }));
+  }, []);
   return (
     <QueryClientProvider client={client}>
-      <FilterCtx.Provider value={{ filter, setFilter, pages, setPage, positiveView, setPositiveView }}>
+      <FilterCtx.Provider value={{ filter, setFilter, pages, setPage, positiveView, setPositiveView, listFilters, setListFilter }}>
         {children}
       </FilterCtx.Provider>
     </QueryClientProvider>
@@ -97,18 +105,22 @@ export function useSection(key) {
   return toSection(query, key ? EMPTY[key] : []);
 }
 
-// The current page of a paged list (leads use the leads filter): { status, data: { items, total, page, limit },
-// reload, fetching, setPage }. While the next page loads, the current one stays on screen. `key` may be null.
+// The current page of a paged list (leads use the leads filter, History lists their own): { status, data: { items,
+// total, page, limit }, reload, fetching, setPage, listFilter, setListFilter }. While the next page loads, the current
+// one stays on screen. `key` may be null.
 export function useList(key) {
-  const { filter, pages, setPage } = useContext(FilterCtx);
+  const { filter, pages, setPage, listFilters, setListFilter } = useContext(FilterCtx);
   const page = key ? pages[key] : 1;
-  const listFilter = key === 'leads' ? filter : null;
+  const listFilter = key === 'leads' ? filter : listFilters[key] ?? null;
   const query = useQuery({
     queryKey: ['list', key, page, listFilter],
     queryFn: key ? () => LISTS[key](page, listFilter) : skipToken,
     placeholderData: keepPreviousData,
   });
-  return { ...toSection(query, EMPTY_PAGE), setPage: (n) => setPage(key, n) };
+  return {
+    ...toSection(query, EMPTY_PAGE), setPage: (n) => setPage(key, n),
+    listFilter, setListFilter: (changes) => setListFilter(key, changes),
+  };
 }
 
 // Replace a section's cached data locally (optimistic updates). Cancels in-flight fetches so they can't overwrite it.

@@ -5,13 +5,16 @@
 //   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox? }
 import { Icon } from './Icon';
 import { Badge, StatusBadge, SourceCell, ExtLink, MetaRow } from './ui';
-import { pad, fmtDate, toneOf, REPLY_LABELS } from '@/core/format';
+import { pad, fmtDate, toneOf, REPLY_LABELS, replyLabel } from '@/core/format';
 import { visiblePositive } from './DataProvider';
 import * as api from '@/core/api';
 
 const ActionButton = ({ onClick, icon, children }) => (
   <button className="btn outline block" onClick={onClick}><Icon name={icon} /> {children}</button>
 );
+
+// The lead (company) an email or reply belongs to.
+const LeadRow = ({ d }) => <MetaRow key="lead" k="Lead">{d.company || <span className="muted">Unknown company</span>}</MetaRow>;
 
 export function getKinds(goto) {
   const lead = {
@@ -85,14 +88,18 @@ export function getKinds(goto) {
         <MetaRow key="to" k="To">{d.to}</MetaRow>,
         <MetaRow key="subj" k="Subject">{d.subject}</MetaRow>,
         <MetaRow key="sent" k="Date/Time Sent">{fmtDate(d.sentAt)}</MetaRow>,
-        <MetaRow key="del" k="Delivery Status"><Badge text={d.deliveryStatus} tone={toneOf(d.deliveryStatus)} /></MetaRow>,
+        <MetaRow key="del" k="Status"><Badge text={d.deliveryStatus} tone={toneOf(d.deliveryStatus)} /></MetaRow>,
         <MetaRow key="reply" k="Reply Status">
           {d.replyId ? <Badge text="Replied" tone="green" /> : <Badge text="No reply" tone="gray" />}
         </MetaRow>,
+        <LeadRow key="lead" d={d} />,
       ],
-      action: d.replyId
-        ? <ActionButton icon="ext" onClick={() => goto('history', 'reply', d.replyId)}>Open linked reply</ActionButton>
-        : null,
+      action: (
+        <>
+          {d.replyId && <ActionButton icon="ext" onClick={() => goto('history', 'reply', d.replyId)}>Open linked reply</ActionButton>}
+          {d.leadId && <ActionButton icon="user" onClick={() => goto('dashboard', 'lead', d.leadId)}>Open lead</ActionButton>}
+        </>
+      ),
       bodyTitle: 'Email Body', body: d.body,
     }),
   };
@@ -105,21 +112,28 @@ export function getKinds(goto) {
       const o = d.originalEmail;
       return {
         title: `Reply #${pad(d.number)}`,
-        badge: <StatusBadge text="Replied" />,
+        badge: <Badge text={replyLabel(d.label)} tone={toneOf(replyLabel(d.label))} />,
         rows: [
           <MetaRow key="from" k="From">{d.senderName}<div className="muted small">{d.senderEmail}</div></MetaRow>,
           <MetaRow key="to" k="To">{d.to}</MetaRow>,
           <MetaRow key="subj" k="Subject">{d.subject}</MetaRow>,
           <MetaRow key="recv" k="Date/Time Received">{fmtDate(d.receivedAt)}</MetaRow>,
+          <MetaRow key="label" k="Reply Type"><Badge text={replyLabel(d.label)} tone={toneOf(replyLabel(d.label))} /></MetaRow>,
+          <LeadRow key="lead" d={d} />,
         ],
         // A reply may not be linked to one of our emails (e.g. it arrived on a new thread).
-        action: o ? (
+        action: (
           <>
-            <div className="linked-label">In reply to</div>
-            <div className="linked"><b>Email #{pad(o.number)}</b><span className="muted">{o.subject}</span></div>
-            <ActionButton icon="ext" onClick={() => goto('history', 'sent', o.id)}>Open original email</ActionButton>
+            {o ? (
+              <>
+                <div className="linked-label">In reply to</div>
+                <div className="linked"><b>Email #{pad(o.number)}</b><span className="muted">{o.subject}</span></div>
+                <ActionButton icon="ext" onClick={() => goto('history', 'sent', o.id)}>Open original email</ActionButton>
+              </>
+            ) : <div className="muted small">Not linked to a sent email.</div>}
+            {d.leadId && <ActionButton icon="user" onClick={() => goto('dashboard', 'lead', d.leadId)}>Open lead</ActionButton>}
           </>
-        ) : <div className="muted small">Not linked to a sent email.</div>,
+        ),
         bodyTitle: 'Reply Body', body: d.body,
       };
     },
