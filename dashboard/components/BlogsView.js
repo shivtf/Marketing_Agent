@@ -9,8 +9,8 @@ import { FormattedContent } from './FormattedContent';
 import { Icon } from './Icon';
 import { useConfirm } from './ConfirmDialog';
 import { getSession, isAdmin } from '@/core/auth';
-import { pad, fmtDate, fmtDay } from '@/core/format';
-import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, weekChoices, fileMonday } from '@/core/blogFiles';
+import { pad, fmtDay } from '@/core/format';
+import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, weekChoices } from '@/core/blogFiles';
 import { readBlogs, checkWeek } from '@/core/weeklyBlogs';
 
 const StatBox = ({ label, value, color }) => (
@@ -135,15 +135,16 @@ function UploadPreview({ preview, busy, onSave, onCancel }) {
           {busy ? 'Saving…' : 'Save to Supabase Storage'}
         </button>
         <button className="btn" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
-        {errors.length > 0 && <span className="muted small">Fix the problems in the file (or pick the right week) and upload it again.</span>}
+        {errors.length > 0 && <span className="muted small">Fix the problems in the file and upload it again.</span>}
       </div>
     </div>
   );
 }
 
 function WeeklyFilesCard({ admin }) {
-  const [weeks] = useState(() => weekChoices()); // fixed while the page is open, so the chosen week can't vanish
-  const [week, setWeek] = useState(weeks[1].week); // next week
+  // Blogs are uploaded once a week, always for next week (fixed while the page is open).
+  const [chosen] = useState(() => weekChoices(2)[1]);
+  const { week } = chosen;
   const [files, setFiles] = useState({ status: 'loading', items: [] });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
@@ -151,12 +152,17 @@ function WeeklyFilesCard({ admin }) {
   const [confirmDialog, confirm] = useConfirm();
   const [blogView, setBlogView] = useState(null); // { name, n }
   const input = useRef(null);
-  const chosen = weeks.find((w) => w.week === week);
 
   const load = () => listWeeklyFiles()
     .then((items) => setFiles({ status: 'ready', items }))
     .catch(() => setFiles({ status: 'error', items: [] }));
   useEffect(() => { load(); }, []);
+  // The "Saved"/"Replaced" note hides itself after 5 seconds; errors stay until the next upload.
+  useEffect(() => {
+    if (msg.tone !== 'ok' || !msg.text) return undefined;
+    const t = setTimeout(() => setMsg({ text: '', tone: 'error' }), 5000);
+    return () => clearTimeout(t);
+  }, [msg]);
 
   async function onFile(e) {
     const file = e.target.files?.[0];
@@ -208,42 +214,15 @@ function WeeklyFilesCard({ admin }) {
     }
   }
 
-  async function onDownload(name) {
-    try {
-      const { text } = await getWeeklyFile(name);
-      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: name });
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10000); // some browsers cancel the download if it goes at once
-    } catch (err) {
-      setMsg({ text: `Couldn't download ${name}: ${err.message}`, tone: 'error' });
-    }
-  }
-
   let body;
   if (files.status === 'loading') body = <Skeleton rows={4} />;
   else if (files.status === 'error') body = <ErrorBox what="the weekly blog files" onRetry={load} />;
-  else if (!files.items.length) body = <EmptyBox icon="calendar">No weekly blog files yet.{admin ? ' Pick a week and upload its JSON.' : ''}</EmptyBox>;
+  else if (!files.items.length) body = <EmptyBox icon="calendar">No weekly blog files yet.{admin ? " Upload next week's JSON." : ''}</EmptyBox>;
   else {
     const rows = [];
     for (const f of files.items) {
-      rows.push(
-        <tr key={`w-${f.name}`} className="week-row">
-          <th colSpan={3}>
-            <div className="week-file">
-              <span>Week of {fmtDay(fileMonday(f.name)).replace(/^\w+, /, '')}</span>
-              <span className="mono file-name">{f.name}</span>
-              <span className="file-meta">Uploaded {fmtDate(f.updatedAt)}</span>
-              <span className="file-buttons">
-                <button className="btn small-btn" type="button" onClick={() => onDownload(f.name)}>Download</button>
-              </span>
-            </div>
-          </th>
-        </tr>,
-      );
-      if (f.problem) rows.push(<tr key={`p-${f.name}`}><td colSpan={3} className="muted">Couldn&apos;t read this file: {f.problem}</td></tr>);
-      else if (!f.blogs) rows.push(<tr key={`o-${f.name}`}><td colSpan={3} className="muted">Older week: click Download to see it.</td></tr>);
-      else if (!f.blogs.length) rows.push(<tr key={`e-${f.name}`}><td colSpan={3} className="muted">No blogs in this file.</td></tr>);
+      if (f.problem) rows.push(<tr key={`p-${f.name}`}><td colSpan={3} className="muted">Couldn&apos;t read {f.name}: {f.problem}</td></tr>);
+      else if (!f.blogs) continue; // older weeks: not read for the schedule
       else {
         for (const b of f.blogs) {
           const open = () => setBlogView({ name: f.name, n: b.n });
@@ -263,7 +242,7 @@ function WeeklyFilesCard({ admin }) {
         }
       }
     }
-    body = (
+    body = !rows.length ? <EmptyBox icon="calendar">No blogs in the recent weekly files.</EmptyBox> : (
       <div className="table-wrap">
         <table>
           <thead><tr><th>Date</th><th>Blog</th><th>Category</th></tr></thead>
@@ -280,12 +259,7 @@ function WeeklyFilesCard({ admin }) {
       {admin && (
         <div className="plan-upload">
           <div className="row week-pick">
-            <select
-              className="select" value={week} disabled={busy} aria-label="Week"
-              onChange={(e) => { setWeek(e.target.value); setPreview(null); }}
-            >
-              {weeks.map((w) => <option key={w.week} value={w.week}>{w.label}</option>)}
-            </select>
+            <span>For <b>{chosen.label.replace(/ \(.*/, '')}</b> (next week)</span>
             <input ref={input} type="file" accept="application/json,.json" hidden onChange={onFile} />
             <button className="btn outline" type="button" disabled={busy} onClick={() => input.current?.click()}>
               <Icon name="doc" /> Upload week JSON
