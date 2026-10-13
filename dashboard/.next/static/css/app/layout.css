@@ -530,6 +530,8 @@ body { background: var(--page-bg); }
 .stage-foot { display: flex; align-items: center; gap: 10px; }
 .stage-foot .stage-track { flex: 1 1; margin-top: 0; }
 .stage-pct { flex: none; min-width: 34px; text-align: right; color: var(--muted); font-size: 12.5px; font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; }
+.stage-note { line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-title + .panel-note { margin: -12px 0 16px; }
 
 /* Recent Leads */
 .leads-card .table-wrap { max-height: 620px; }

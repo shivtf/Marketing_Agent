@@ -54,9 +54,11 @@ function Greeting() {
 }
 
 // ---------- Stat cards ----------
+// Counts are leads, not emails: "Leads Emailed" is leads emailed at least once (follow-ups don't add to it).
+// Percentages use the same base as the Lead Pipeline: emailed is a share of all leads, replies a share of emailed.
 const KPIS = [
   { label: 'Total Leads', icon: 'building', tone: 'blue', value: (d) => d.total, hint: () => 'All leads found' },
-  { label: 'Emails Sent', icon: 'mail', tone: 'red', value: (d, sent) => sent, hint: (d, sent) => `${pct(sent, d.total)}% of leads` },
+  { label: 'Leads Emailed', icon: 'mail', tone: 'red', value: (d, sent) => sent, hint: (d, sent) => `${pct(sent, d.total)}% of leads` },
   { label: 'Awaiting Reply', icon: 'clock', tone: 'green', value: (d) => d.awaiting, hint: (d, sent) => `${pct(d.awaiting, sent)}% of emailed` },
   { label: 'Responses', icon: 'reply', tone: 'lavender', value: (d) => d.responded, hint: (d, sent) => `${pct(d.responded, sent)}% of emailed` },
 ];
@@ -86,19 +88,22 @@ function StatRow({ stats }) {
   );
 }
 
-// ---------- Lead Pipeline: where every lead stands, as a share of all leads ----------
+// ---------- Lead Pipeline: where every lead stands ----------
+// Every lead is in exactly one of Not Sent, Awaiting, Responded and Bounced, so Awaiting + Responded + Bounced add up
+// to Emailed. Emailed is a share of all leads; the three after it are shares of emailed leads, like the stat cards.
 function Pipeline({ stats }) {
   const { status, data, reload } = stats;
   let body;
   if (status === 'loading') body = <Skeleton rows={3} />;
   else if (status === 'error') body = <ErrorBox what="the lead pipeline" onRetry={reload} />;
   else {
+    const emailed = data.total - data.notSent;
     const stages = [
-      { label: 'Found', icon: 'building', tone: 'blue', n: data.total },
-      { label: 'Not Sent', icon: 'funnel', tone: 'slate', n: data.notSent },
-      { label: 'Emailed', icon: 'send', tone: 'green', n: data.total - data.notSent },
-      { label: 'Awaiting', icon: 'mail', tone: 'amber', n: data.awaiting },
-      { label: 'Responded', icon: 'reply', tone: 'lavender', n: data.responded },
+      { label: 'Found', icon: 'building', tone: 'blue', n: data.total, note: `${data.notSent} not emailed yet` },
+      { label: 'Emailed', icon: 'send', tone: 'green', n: emailed, of: data.total, ofWhat: 'all leads' },
+      { label: 'Awaiting', icon: 'mail', tone: 'amber', n: data.awaiting, of: emailed, ofWhat: 'emailed leads' },
+      { label: 'Responded', icon: 'reply', tone: 'lavender', n: data.responded, of: emailed, ofWhat: 'emailed leads' },
+      { label: 'Bounced', icon: 'alert', tone: 'red', n: data.bounced ?? 0, of: emailed, ofWhat: 'emailed leads' },
     ];
     body = (
       <ol className="stages">
@@ -113,10 +118,12 @@ function Pipeline({ stats }) {
                   <div className="stage-n">{s.n}</div>
                 </div>
               </div>
-              <div className="stage-foot">
-                <span className="stage-track" aria-hidden="true"><span style={{ width: `${pct(s.n, data.total)}%` }} /></span>
-                <span className="stage-pct">{pct(s.n, data.total)}%</span>
-              </div>
+              {s.note ? <div className="stage-note muted small">{s.note}</div> : (
+                <div className="stage-foot" title={`${pct(s.n, s.of)}% of ${s.ofWhat}`}>
+                  <span className="stage-track" aria-hidden="true"><span style={{ width: `${pct(s.n, s.of)}%` }} /></span>
+                  <span className="stage-pct">{pct(s.n, s.of)}%</span>
+                </div>
+              )}
             </div>
           </li>
         ))}
@@ -126,6 +133,7 @@ function Pipeline({ stats }) {
   return (
     <section className="card">
       <h2 className="panel-title"><Icon name="funnel" /> Lead Pipeline</h2>
+      <p className="muted small panel-note">Emailed is a share of all leads; Awaiting, Responded and Bounced are shares of emailed leads.</p>
       {body}
     </section>
   );
