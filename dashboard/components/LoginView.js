@@ -23,8 +23,11 @@ export default function LoginView() {
     else {
       document.body.classList.add('auth-view');
       emailRef.current?.focus();
-      if (new URLSearchParams(window.location.search).get('ended') === 'elsewhere') {
+      const ended = new URLSearchParams(window.location.search).get('ended');
+      if (ended === 'elsewhere') {
         setMsg({ text: 'You were signed out because this account is now in use on another device.', tone: 'error' });
+      } else if (ended === 'noaccess') {
+        setMsg({ text: `${auth.NO_ACCESS} Ask your admin for access.`, tone: 'error' });
       }
     }
   });
@@ -39,11 +42,12 @@ export default function LoginView() {
     const email = emailRef.current.value.trim();
     try {
       await auth.signIn(email, passwordRef.current.value);
-      // One sign-in per account: the backend refuses (409) while the account is in use on another device.
+      // One sign-in per account: the backend refuses (409) while the account is in use on another device, and
+      // (403) an account an admin never gave a dashboard role.
       try {
         await getMe({ keepSession: true });
       } catch (err) {
-        if (err.status === 409 || err.status === 401) {
+        if (err.status === 409 || err.status === 401 || err.status === 403) {
           await auth.endSession(err.message, { redirect: false });
           throw err;
         }

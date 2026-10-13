@@ -105,6 +105,27 @@ export default function UsersView() {
     }
   }
 
+  // An account without a dashboard role (e.g. made before roles were saved on creation) can't use the dashboard.
+  async function onGiveAccess(u) {
+    const ok = await confirm({
+      title: `Give ${u.name || u.email} access?`,
+      message: `${u.email} will be able to use the dashboard as an employee.`,
+      confirmLabel: 'Give access',
+    });
+    if (!ok) return;
+    setMsg({ text: '', tone: 'error' });
+    setChangingRole(u.id);
+    try {
+      const updated = await admin.setUserRole(u.id, 'employee');
+      setUsers((list) => list.map((x) => (x.id === u.id ? updated : x)));
+      setMsg({ text: `${u.email} can now use the dashboard.`, tone: 'ok' });
+    } catch (err) {
+      setMsg({ text: err.message, tone: 'error' });
+    } finally {
+      setChangingRole(null);
+    }
+  }
+
   async function onRemove(u) {
     const ok = await confirm({
       title: `Remove ${u.name || 'this user'}?`,
@@ -141,11 +162,16 @@ export default function UsersView() {
     <tr key={u.id}>
       <td>{u.name || '—'}</td>
       <td>{u.email}</td>
-      <td>{u.role === 'admin' ? <Badge text="Admin" tone="gray" /> : 'Employee'}</td>
+      <td>{u.role === 'admin' ? <Badge text="Admin" tone="gray" /> : u.role === 'none' ? <Badge text="No access" tone="red" /> : 'Employee'}</td>
       <td>{fmt(u.lastSignInAt)}</td>
       <td>
         {u.id === meId ? <span className="muted small">You</span> : (
           <div className="user-actions">
+            {u.role === 'none' && (
+              <button className="btn" type="button" disabled={changingRole === u.id} onClick={() => onGiveAccess(u)}>
+                {changingRole === u.id ? 'Saving…' : 'Give access'}
+              </button>
+            )}
             <button className="btn" type="button" disabled={changingRole === u.id} onClick={() => onToggleAdmin(u)}>
               {changingRole === u.id ? 'Saving…' : u.role === 'admin' ? 'Remove admin' : 'Make admin'}
             </button>

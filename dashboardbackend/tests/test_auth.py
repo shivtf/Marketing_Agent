@@ -24,6 +24,7 @@ def _token(**over):
         "role": "authenticated",
         "aud": "authenticated",
         "exp": int(time.time()) + 60,
+        "app_metadata": {"role": "employee"},
         **over,
     }
     return jwt.encode(claims, SECRET, algorithm="HS256")
@@ -63,6 +64,31 @@ def test_bad_signature():
         algorithm="HS256",
     )
     assert _get(bad).status_code == 401
+
+
+@pytest.mark.parametrize("app_metadata", [None, {}, {"role": None}, {"role": "hacker"}, {"role": "authenticated"}])
+def test_account_without_a_dashboard_role_is_refused(app_metadata):
+    # e.g. a Supabase account that signed itself up: a valid token, but no role from an admin
+    res = _get(_token(app_metadata=app_metadata))
+    assert res.status_code == 403 and res.json()["detail"] == "This account has no access to the dashboard."
+
+
+@pytest.mark.parametrize("role", ["admin", "employee"])
+def test_dashboard_roles_are_allowed(role):
+    assert _get(_token(app_metadata={"role": role})).status_code == 200
+
+
+def test_data_and_agent_routes_refuse_an_account_without_a_role():
+    headers = {"Authorization": f"Bearer {_token(app_metadata={})}"}
+    assert client.get("/leads", headers=headers).status_code == 403
+    assert client.get("/agent", headers=headers).status_code == 403
+    assert client.post("/agent/start", headers=headers).status_code == 403
+    assert client.post("/agent/stop", headers=headers).status_code == 403
+
+
+def test_account_without_a_role_never_takes_the_sign_in(presence):
+    assert _get(_token(session_id=SESSION, app_metadata={})).status_code == 403
+    assert presence["holder"] is None
 
 
 def test_removed_user_is_rejected():

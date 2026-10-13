@@ -25,9 +25,12 @@ export async function signOut() {
 // whoever is using the account on another device), then go to the login page, saying why when the account is in
 // use elsewhere. `redirect: false` stays on the current page (the login form shows the reason itself).
 export const IN_USE = 'This account is already signed in on another device.';
+// The backend's 403 for a Supabase account an admin never gave a dashboard role (dashboardbackend/app/auth.py).
+export const NO_ACCESS = 'This account has no access to the dashboard.';
+const ENDED = { [IN_USE]: 'elsewhere', [NO_ACCESS]: 'noaccess' };
 export async function endSession(reason, { redirect = true } = {}) {
   await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
-  if (redirect) window.location.assign(reason === IN_USE ? '/login?ended=elsewhere' : '/login');
+  if (redirect) window.location.assign(ENDED[reason] ? `/login?ended=${ENDED[reason]}` : '/login');
 }
 
 // Authenticated call to this app's own /api routes; throws Error with the server's message.

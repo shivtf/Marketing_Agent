@@ -28,6 +28,7 @@ export const POST = handle(async (request) => {
     password,
     email_confirm: true,
     user_metadata: { name },
+    app_metadata: { role: 'employee' }, // without a role the account has no access (getCaller, backend auth.py)
   });
   if (err) {
     const taken = /already|registered|exists/i.test(err.message);

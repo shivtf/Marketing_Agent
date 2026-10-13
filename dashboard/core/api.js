@@ -1,5 +1,5 @@
 // All data access lives here. Everything comes from the backend (dashboardbackend/app).
-import { endSession, getSession } from './auth';
+import { endSession, getSession, NO_ACCESS } from './auth';
 
 // ---------- Backend (eval/dashboardbackend) ----------
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -8,8 +8,9 @@ export class ApiError extends Error {
   constructor(message, status) { super(message); this.status = status; } // status 0 = backend unreachable
 }
 
-// Calls the Python backend with the Supabase access token as a Bearer token. A 401 (signed out) or 409 (the account
-// is in use on another device) ends the session and returns to the login page, unless `keepSession` is set.
+// Calls the Python backend with the Supabase access token as a Bearer token. A 401 (signed out), 409 (the account
+// is in use on another device) or 403 NO_ACCESS (the account has no dashboard role) ends the session and returns to
+// the login page, unless `keepSession` is set.
 export async function apiFetch(path, { keepSession, ...options } = {}) {
   const session = await getSession();
   let res;
@@ -24,7 +25,8 @@ export async function apiFetch(path, { keepSession, ...options } = {}) {
   if (!res.ok) {
     // FastAPI puts the reason in { detail } (e.g. a missing table); show it when it's plain text.
     const detail = await res.json().then((b) => b.detail).catch(() => null);
-    if ((res.status === 401 || res.status === 409) && session && !keepSession) await endSession(detail);
+    const ended = res.status === 401 || res.status === 409 || (res.status === 403 && detail === NO_ACCESS);
+    if (ended && session && !keepSession) await endSession(detail);
     throw new ApiError(typeof detail === 'string' ? detail : `Request failed (${res.status})`, res.status);
   }
   return res.json();

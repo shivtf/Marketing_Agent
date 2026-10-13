@@ -19,6 +19,9 @@ export async function getCaller(request) {
   if (!token) return { error: json('Not signed in.', 401) };
   const { data, error } = await adminClient().auth.getUser(token);
   if (error || !data.user || data.user.app_metadata?.removed) return { error: json('Not signed in.', 401) };
+  // Only accounts an admin gave a dashboard role, whatever the project's sign-up setting is (same rule as the
+  // backend's current_user).
+  if (!ROLES.includes(data.user.app_metadata?.role)) return { error: json('This account has no access to the dashboard.', 403) };
   return { user: data.user };
 }
 
@@ -37,7 +40,7 @@ export const summarize = (u) => ({
   id: u.id,
   email: u.email,
   name: u.user_metadata?.name || '',
-  role: u.app_metadata?.role || 'employee',
+  role: ROLES.includes(u.app_metadata?.role) ? u.app_metadata.role : 'none', // 'none': can't use the dashboard
   createdAt: u.created_at,
   lastSignInAt: u.last_sign_in_at,
 });

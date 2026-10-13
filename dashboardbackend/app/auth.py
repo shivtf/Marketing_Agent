@@ -12,6 +12,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 log = logging.getLogger(__name__)
 bearer = HTTPBearer(auto_error=False)
 ASYMMETRIC_ALGS = ["ES256", "RS256", "EdDSA"]
+# Dashboard roles, set by an admin in app_metadata (only the service key can write it). A Supabase account without
+# one (e.g. one that signed itself up) gets no access, whatever the project's sign-up setting is.
+ROLES = ("admin", "employee")
+NO_ACCESS = "This account has no access to the dashboard."
 
 
 def _unauthorized(detail: str) -> HTTPException:
@@ -147,16 +151,20 @@ async def _check_session(claims: dict) -> None:
 
 async def current_user(creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> dict:
     """FastAPI dependency: 401 unless the request carries a valid Supabase access token from a current sign-in;
-    409 while another session is using the account."""
+    403 for an account without a dashboard role; 409 while another session is using the account."""
     if creds is None:
         raise _unauthorized("Missing bearer token")
     try:
         claims = decode_token(creds.credentials)
     except jwt.PyJWTError as exc:
         raise _unauthorized("Invalid or expired token") from exc
+    app_metadata = claims.get("app_metadata") or {}
     # Fast path for tokens issued after removal; _check_session also catches older ones from the database.
-    if (claims.get("app_metadata") or {}).get("removed"):
+    if app_metadata.get("removed"):
         raise _unauthorized("Account removed")
+    # Checked before the sign-in check, so an account without a role never takes the account's sign-in.
+    if app_metadata.get("role") not in ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, NO_ACCESS)
     await _check_session(claims)
     return claims
 

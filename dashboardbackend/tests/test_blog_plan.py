@@ -26,7 +26,8 @@ def _env(monkeypatch):
 
 
 def _auth(sub="u1"):
-    claims = {"sub": sub, "email": f"{sub}@x.co", "aud": "authenticated", "exp": int(time.time()) + 60}
+    claims = {"sub": sub, "email": f"{sub}@x.co", "aud": "authenticated", "exp": int(time.time()) + 60,
+              "app_metadata": {"role": "employee"}}
     return {"Authorization": f"Bearer {jwt.encode(claims, SECRET, algorithm='HS256')}"}
 
 
