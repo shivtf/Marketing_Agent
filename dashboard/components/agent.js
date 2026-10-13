@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useUpdateSection } from './DataProvider';
 import { Badge } from './ui';
+import { useConfirm } from './ConfirmDialog';
 import * as api from '@/core/api';
 import { fmtDate } from '@/core/format';
 
@@ -44,12 +45,31 @@ export function EmailModeBadge({ agent }) {
   return null;
 }
 
+// Approved emails go to the real contacts (the "Live emails" badge above).
+const sendsLiveEmails = (agent) => agent?.testMode === false && agent?.sendingEnabled !== false;
+
+// Who may press what: only admins start the agent (it can send real emails), everyone may stop it (the safety brake;
+// the backend enforces the same in dashboardbackend/app/agent.py). -> 'stop' | 'start' | null (nothing to press)
+export const agentButton = (view, admin) => (view.wantsRun ? 'stop' : admin ? 'start' : null);
+export const ADMINS_START = 'Only admins can start the agent.';
+
 // Start / Stop. The answer replaces the cached status right away; DataProvider then polls until it is in sync.
+// Starting with live emails asks first. Render `confirmDialog` once where the hook is used.
 export function useAgentAction() {
   const update = useUpdateSection();
+  const [confirmDialog, confirm] = useConfirm();
   const [acting, setActing] = useState(false);
   const [error, setError] = useState('');
-  async function act(action) {
+  async function act(action, agent) {
+    if (action === 'start' && sendsLiveEmails(agent)) {
+      const ok = await confirm({
+        title: 'Start the agent with live emails?',
+        message: 'Approved emails will go to the real contacts, not the test inbox.',
+        confirmLabel: 'Start Agent',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     setError('');
     setActing(true);
     try {
@@ -61,5 +81,5 @@ export function useAgentAction() {
       setActing(false);
     }
   }
-  return { act, acting, error };
+  return { act, acting, error, confirmDialog };
 }

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Icon } from './Icon';
 import { ErrorBox, Skeleton } from './ui';
 import { DataProvider, useSection } from './DataProvider';
-import { describeAgent, EmailModeBadge, useAgentAction } from './agent';
+import { ADMINS_START, agentButton, describeAgent, EmailModeBadge, useAgentAction } from './agent';
 import { DrawerProvider } from './DrawerProvider';
 import * as auth from '@/core/auth';
 import { getMe, releaseAccount } from '@/core/api';
@@ -23,12 +23,13 @@ const ADMIN_TABS = [{ href: '/users', label: 'Users', icon: 'users' }];
 
 const initials = (name, email) => (name || email || '?').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
 
-// Sidebar box with the agent's state and Start/Stop, so it can be run from any page.
-function AgentStatusBox() {
+// Sidebar box with the agent's state and Start/Stop, so it can be run from any page (Start: admins only).
+function AgentStatusBox({ admin }) {
   const { status, data } = useSection('agent');
-  const { act, acting, error } = useAgentAction();
+  const { act, acting, error, confirmDialog } = useAgentAction();
   if (status !== 'ready' || !data) return null;
   const v = describeAgent(data);
+  const button = agentButton(v, admin);
   const last = data.lastPass;
   return (
     <div className="side-agent">
@@ -46,14 +47,17 @@ function AgentStatusBox() {
         </>
       )}
       {error && <div className="notice small">{error}</div>}
-      <button
-        className="btn primary side-agent-btn"
-        disabled={acting || v.busy}
-        onClick={() => act(v.wantsRun ? 'stop' : 'start')}
-        title={v.wantsRun ? 'Stop Agent' : 'Start Agent'}
-      >
-        <Icon name={v.wantsRun ? 'pause' : 'play'} /> <span className="side-label">{v.wantsRun ? 'Stop Agent' : 'Start Agent'}</span>
-      </button>
+      {button ? (
+        <button
+          className="btn primary side-agent-btn"
+          disabled={acting || v.busy}
+          onClick={() => act(button, data)}
+          title={button === 'stop' ? 'Stop Agent' : 'Start Agent'}
+        >
+          <Icon name={button === 'stop' ? 'pause' : 'play'} /> <span className="side-label">{button === 'stop' ? 'Stop Agent' : 'Start Agent'}</span>
+        </button>
+      ) : <div className="muted small side-label">{ADMINS_START}</div>}
+      {confirmDialog}
     </div>
   );
 }
@@ -82,7 +86,7 @@ export function Sidebar({ admin }) {
           );
         })}
       </nav>
-      <AgentStatusBox />
+      <AgentStatusBox admin={admin} />
     </aside>
   );
 }

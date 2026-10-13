@@ -12,11 +12,12 @@ from typing import Annotated, Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth import current_user
+from app.auth import current_admin, current_user
 from app.data import _pg
 
 router = APIRouter(prefix="/agent")
 User = Annotated[dict, Depends(current_user)]
+Admin = Annotated[dict, Depends(current_admin)]
 
 DEFAULT_URL = "https://marketing-agent-pipeline-api.onrender.com"
 
@@ -94,8 +95,11 @@ async def agent_status(_user: User) -> dict:
     return await _with_name(await _call("GET", "status"))
 
 
+# Starting can send real emails, so only admins may start the agent. Anyone signed in may stop it: stopping is the
+# safety brake (nothing is lost, an admin can start it again), and whoever sees something wrong should not have to
+# find an admin first. Who stopped it shows on the dashboard ("Stopped by").
 @router.post("/start")
-async def start(user: User) -> dict:
+async def start(user: Admin) -> dict:
     return await _with_name(await _call("POST", "start", _requested_by(user)))
 
 

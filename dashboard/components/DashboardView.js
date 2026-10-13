@@ -6,8 +6,8 @@ import { Icon } from './Icon';
 import { OpenRow } from './OpenRow';
 import { useList, useSection } from './DataProvider';
 import { StatusBadge, Skeleton, ErrorBox, DataTable, Pager } from './ui';
-import { describeAgent, EmailModeBadge, OUTCOMES, useAgentAction } from './agent';
-import { getSession } from '@/core/auth';
+import { ADMINS_START, agentButton, describeAgent, EmailModeBadge, OUTCOMES, useAgentAction } from './agent';
+import { getSession, isAdmin } from '@/core/auth';
 import { fmtDate, sourceLabel, toneOf } from '@/core/format';
 
 const pct = (n, total) => (total ? Math.round((n / total) * 100) : 0);
@@ -184,16 +184,19 @@ function RecentLeads() {
   );
 }
 
-// ---------- Agent Control ----------
+// ---------- Agent Control (Start: admins only; Stop: everyone) ----------
 function AgentControl() {
   const { status, data, reload } = useSection('agent');
-  const { act, acting, error } = useAgentAction();
+  const { act, acting, error, confirmDialog } = useAgentAction();
+  const [admin, setAdmin] = useState(false);
+  useEffect(() => { getSession().then((s) => setAdmin(isAdmin(s))); }, []);
 
   let body;
   if (status === 'loading') body = <Skeleton rows={4} />;
   else if (status === 'error') body = <ErrorBox what="the agent status" onRetry={reload} />;
   else {
     const v = describeAgent(data);
+    const button = agentButton(v, admin);
     const last = data.lastPass;
     const who = data.requestedByName || data.requestedBy?.replace(/^dashboard:/, '');
     const since = data.inSync && data.stateSince && (data.state === 'running' || data.state === 'stopped');
@@ -211,13 +214,15 @@ function AgentControl() {
           <span className={`agent-word ${toneOf(v.badge)}`}>{v.badge}</span>
           <EmailModeBadge agent={data} />
         </div>
-        <button
-          className="btn primary agent-btn"
-          disabled={acting || v.busy}
-          onClick={() => act(v.wantsRun ? 'stop' : 'start')}
-        >
-          <Icon name={v.wantsRun ? 'pause' : 'play'} /> {v.wantsRun ? 'Stop Agent' : 'Start Agent'}
-        </button>
+        {button ? (
+          <button
+            className="btn primary agent-btn"
+            disabled={acting || v.busy}
+            onClick={() => act(button, data)}
+          >
+            <Icon name={button === 'stop' ? 'pause' : 'play'} /> {button === 'stop' ? 'Stop Agent' : 'Start Agent'}
+          </button>
+        ) : <p className="muted small">{ADMINS_START}</p>}
         <dl className="kv">
           {rows.map(([k, val]) => <div key={k} className="kv-row"><dt>{k}</dt><dd>{val}</dd></div>)}
         </dl>
@@ -229,6 +234,7 @@ function AgentControl() {
       <h2 className="panel-title"><Icon name="bolt" /> Agent Control</h2>
       {error && <div className="notice">{error}</div>}
       {body}
+      {confirmDialog}
     </section>
   );
 }

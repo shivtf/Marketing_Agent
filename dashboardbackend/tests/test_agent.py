@@ -7,7 +7,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from app import agent
+from app import agent, data
 from app.main import app
 
 SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
@@ -45,6 +45,23 @@ def _names(monkeypatch):
     monkeypatch.setattr(agent, "_pg", pg)
 
 
+@pytest.fixture(autouse=True)
+def role(monkeypatch):
+    """The caller's role in auth.users, as current_admin reads it (start is admin-only). Set role["value"] to change."""
+    role = {"value": "admin"}
+
+    class RolePool:
+        async def fetchval(self, sql, *_args):
+            assert "raw_app_meta_data->>'role'" in sql
+            return role["value"]
+
+    async def pg():
+        return RolePool()
+
+    monkeypatch.setattr(data, "_pg", pg)
+    return role
+
+
 @pytest.fixture
 def pipeline(monkeypatch):
     """Fake pipeline API: records each request and answers with `reply` (status, body)."""
@@ -72,6 +89,36 @@ def test_start_forwards_token_and_user(pipeline):
     assert req.method == "POST" and str(req.url) == "https://pipeline.test/api/v1/pipeline/start"
     assert req.headers["authorization"] == "Bearer tok"
     assert json.loads(req.content) == {"requested_by": "a@b.co"}
+
+
+def test_employee_cannot_start(pipeline, role):
+    calls, _ = pipeline
+    role["value"] = "employee"
+    res = client.post("/agent/start", headers=_auth())
+    assert res.status_code == 403 and res.json()["detail"] == "Admins only."
+    assert calls == []  # the pipeline API is never asked
+
+
+def test_employee_can_stop_and_see_status(pipeline, role):
+    calls, _ = pipeline
+    role["value"] = "employee"
+    assert client.post("/agent/stop", headers=_auth()).status_code == 200
+    assert client.get("/agent", headers=_auth()).status_code == 200
+    assert [(r.method, r.url.path) for r in calls] == [
+        ("POST", "/api/v1/pipeline/stop"),
+        ("GET", "/api/v1/pipeline/status"),
+    ]
+
+
+def test_start_is_refused_when_the_role_cannot_be_read(pipeline, monkeypatch):
+    calls, _ = pipeline
+
+    async def broken():
+        raise RuntimeError("no database")
+
+    monkeypatch.setattr(data, "_pg", broken)
+    assert client.post("/agent/start", headers=_auth()).status_code == 503
+    assert calls == []
 
 
 def test_status_and_stop(pipeline):
