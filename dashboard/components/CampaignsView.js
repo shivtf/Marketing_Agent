@@ -11,6 +11,12 @@ import { getSession, isAdmin } from '@/core/auth';
 
 const EMPTY = { campaignName: '', campaignDetail: '', startDate: '', endDate: '', isActive: true };
 const DAY = 86400000;
+// Same limits as the server (core/server/campaigns.js): they catch a mistyped year.
+const FIRST_DAY = '2000-01-01';
+const LAST_DAY = '2099-12-31';
+const MAX_DAYS = 366;
+// The server's answer when someone else changed the campaign since this page loaded it.
+const isConflict = (err) => err.status === 409;
 
 // Calendar dates ('YYYY-MM-DD') as whole days, so time zones never shift them.
 const dayNo = (ymd) => Math.round(Date.parse(`${ymd}T00:00:00Z`) / DAY);
@@ -50,7 +56,7 @@ const FILTERS = [['all', 'All'], ['running', 'Running'], ['upcoming', 'Upcoming'
 
 // ---------- Add / edit dialog ----------
 
-function CampaignDialog({ initial, onClose, onSaved }) {
+function CampaignDialog({ initial, onClose, onSaved, onConflict }) {
   const ref = useRef(null);
   const [form, setForm] = useState(initial ? { ...initial } : EMPTY);
   const [busy, setBusy] = useState(false);
@@ -66,11 +72,14 @@ function CampaignDialog({ initial, onClose, onSaved }) {
     if (!form.campaignName.trim()) return setError('Enter the campaign name.');
     if (!form.startDate || !form.endDate) return setError('Pick the start and end dates.');
     if (form.endDate < form.startDate) return setError('The end date must be on or after the start date.');
+    if ([form.startDate, form.endDate].some((d) => d < FIRST_DAY || d > LAST_DAY)) return setError('Dates must be between 2000 and 2099.');
+    if (days > MAX_DAYS) return setError(`A campaign can run for at most ${MAX_DAYS} days.`);
     setBusy(true);
     try {
       const fields = { campaignName: form.campaignName, campaignDetail: form.campaignDetail, startDate: form.startDate, endDate: form.endDate, isActive: form.isActive };
-      onSaved(initial ? await campaigns.updateCampaign(initial.id, fields) : await campaigns.createCampaign(fields), !initial);
+      onSaved(initial ? await campaigns.updateCampaign(initial.id, { ...fields, updatedAt: initial.updatedAt }) : await campaigns.createCampaign(fields), !initial);
     } catch (err) {
+      if (initial && isConflict(err)) return onConflict(err.message);
       setError(err.message);
       setBusy(false);
     }
@@ -94,8 +103,8 @@ function CampaignDialog({ initial, onClose, onSaved }) {
           <input value={form.campaignName} onChange={set('campaignName')} maxLength={200} autoComplete="off" placeholder="e.g. Diwali AOSP services push" autoFocus required />
         </label>
         <div className="campaign-dates">
-          <label className="field"><span>Start date</span><input type="date" value={form.startDate} onChange={set('startDate')} required /></label>
-          <label className="field"><span>End date</span><input type="date" value={form.endDate} min={form.startDate || undefined} onChange={set('endDate')} required /></label>
+          <label className="field"><span>Start date</span><input type="date" value={form.startDate} min={FIRST_DAY} max={LAST_DAY} onChange={set('startDate')} required /></label>
+          <label className="field"><span>End date</span><input type="date" value={form.endDate} min={form.startDate || FIRST_DAY} max={LAST_DAY} onChange={set('endDate')} required /></label>
         </div>
         <div className="muted small campaign-length">{days ? `Runs for ${plural(days, 'day')}` : ' '}</div>
         <label className="field">
@@ -191,12 +200,14 @@ export default function CampaignsView() {
   const [confirmDialog, confirm] = useConfirm();
   const today = todayYmd();
 
-  const load = useCallback(async () => {
-    setStatus('loading');
+  // `quiet`: refresh what is on screen without the loading skeleton (after a conflict).
+  const load = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setStatus('loading');
     try {
       setItems(await campaigns.listCampaigns());
       setStatus('ready');
     } catch (err) {
+      if (quiet) return; // keep what is on screen; the conflict message already says what happened
       setLoadError(err.message);
       setStatus('error');
     }
@@ -232,6 +243,13 @@ export default function CampaignsView() {
   const shown = withState.filter(({ c, s }) => (filter === 'all' || s.key === filter)
     && (!q || c.campaignName.toLowerCase().includes(q) || c.campaignDetail.toLowerCase().includes(q)));
 
+  // Someone else changed the campaign while it was open here: nothing was saved, so show their version.
+  function onConflict(message) {
+    setDialog(null);
+    setMsg({ text: message, tone: 'error' });
+    load({ quiet: true });
+  }
+
   function onSaved(saved, isNew) {
     setDialog(null);
     setItems((list) => (isNew ? [saved, ...list] : list.map((c) => (c.id === saved.id ? saved : c))));
@@ -242,10 +260,11 @@ export default function CampaignsView() {
     setWorking(c.id);
     setMsg({ text: '', tone: 'error' });
     try {
-      const saved = await campaigns.updateCampaign(c.id, { isActive: !c.isActive });
+      const saved = await campaigns.updateCampaign(c.id, { isActive: !c.isActive, updatedAt: c.updatedAt });
       setItems((list) => list.map((x) => (x.id === saved.id ? saved : x)));
     } catch (err) {
       setMsg({ text: err.message, tone: 'error' });
+      if (isConflict(err)) load({ quiet: true });
     } finally {
       setWorking(null);
     }
@@ -347,6 +366,7 @@ export default function CampaignsView() {
           initial={dialog.campaign}
           onClose={() => setDialog(null)}
           onSaved={onSaved}
+          onConflict={onConflict}
         />
       )}
       {confirmDialog}

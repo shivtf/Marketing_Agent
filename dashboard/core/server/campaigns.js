@@ -11,11 +11,19 @@ const isDay = (s) => {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s; // 2026-02-30 rolls over: not a real day
 };
 
+// Limits that catch a mistyped year (20266, 0026): dates in 2000-2099, a campaign at most a year long.
+// Same limits as the form in components/CampaignsView.js.
+export const FIRST_DAY = '2000-01-01';
+export const LAST_DAY = '2099-12-31';
+export const MAX_DAYS = 366;
+const days = (start, end) => Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1;
+
 // Body from the page -> { row } ready to save, or { error: Response }. `partial` (an update) checks only the fields
-// that were sent; dates are then checked against each other only when both are sent (the database checks the rest).
+// that were sent; dates come as a pair, so they can always be checked against each other.
 export function checkCampaign(body, { partial = false } = {}) {
   const row = {};
   const has = (k) => k in body;
+  if (partial && has('startDate') !== has('endDate')) return { error: fail('Send the start and end dates together.', 400) };
   if (!partial || has('campaignName')) {
     const name = String(body.campaignName ?? '').trim();
     if (!name) return { error: fail('Enter the campaign name.', 400) };
@@ -30,11 +38,15 @@ export function checkCampaign(body, { partial = false } = {}) {
   for (const [key, col, label] of [['startDate', 'start_date', 'start date'], ['endDate', 'end_date', 'end date']]) {
     if (!partial || has(key)) {
       if (!isDay(body[key])) return { error: fail(`Pick a ${label}.`, 400) };
+      if (body[key] < FIRST_DAY || body[key] > LAST_DAY) return { error: fail(`The ${label} must be between 2000 and 2099.`, 400) };
       row[col] = body[key];
     }
   }
   if (row.start_date && row.end_date && row.end_date < row.start_date) {
     return { error: fail('The end date must be on or after the start date.', 400) };
+  }
+  if (row.start_date && row.end_date && days(row.start_date, row.end_date) > MAX_DAYS) {
+    return { error: fail(`A campaign can run for at most ${MAX_DAYS} days.`, 400) };
   }
   if (!partial || has('isActive')) {
     if (has('isActive') && typeof body.isActive !== 'boolean') return { error: fail('isActive must be true or false.', 400) };
@@ -54,12 +66,22 @@ export const toCampaign = (r) => ({
   updatedAt: r.updated_at,
 });
 
-// A Supabase error -> a clear Response. The usual first-time problem is the table not existing yet.
+// A Supabase error -> a clear Response. The usual first-time problems are a missing table or column (a SQL file not
+// run yet). Told apart by error code: Postgres 42P01 / PostgREST PGRST205 = no such table, 42703 / PGRST204 = no such
+// column; the message is a fallback for older PostgREST versions.
+const NO_TABLE = (err) => ['42P01', 'PGRST205'].includes(err?.code)
+  || /could not find the table|relation "?[\w.]*campaign"? does not exist/i.test(err?.message || '');
+const NO_COLUMN = (err) => ['42703', 'PGRST204'].includes(err?.code)
+  || /could not find the '[^']+' column|column [\w.]+ does not exist/i.test(err?.message || '');
+
 export function dbError(err, doing) {
-  if (/deleted_at/.test(err?.message || '')) {
-    return fail('The campaign table has no deleted_at column yet. Run dashboardbackend/migrations/004_campaign_soft_delete.sql in the Supabase SQL editor.', 500);
+  if (NO_COLUMN(err)) {
+    console.error('[campaigns]', doing, err?.message);
+    return /deleted_at/.test(err?.message || '')
+      ? fail('The campaign table has no deleted_at column yet. Run dashboardbackend/migrations/004_campaign_soft_delete.sql in the Supabase SQL editor.', 500)
+      : fail('The campaign table is missing a column. Run the campaign SQL files in dashboardbackend/migrations (003, then 004) in the Supabase SQL editor.', 500);
   }
-  if (/campaign/.test(err?.message || '') && /(does not exist|could not find|schema cache)/i.test(err.message)) {
+  if (NO_TABLE(err)) {
     return fail('The campaign table does not exist yet. Run dashboardbackend/migrations/003_campaign.sql in the Supabase SQL editor.', 500);
   }
   if (err?.code === '23514') return fail('The end date must be on or after the start date.', 400);
