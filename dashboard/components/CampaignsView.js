@@ -301,12 +301,7 @@ export default function CampaignsView() {
       </>
     );
   } else if (!items.length) {
-    body = (
-      <EmptyBox icon="bolt">
-        No campaigns yet.
-        {admin && <div className="campaign-empty-cta"><button className="btn primary" type="button" onClick={() => setDialog({ campaign: null })}><Icon name="plus" /> Create the first campaign</button></div>}
-      </EmptyBox>
-    );
+    body = <EmptyBox icon="bolt">No campaigns yet.</EmptyBox>; // admins create one with "New campaign" at the top
   } else if (!shown.length) {
     body = <EmptyBox icon="bolt">No campaigns match{q ? ` "${query.trim()}"` : ''}{filter !== 'all' ? ` in ${FILTERS.find(([k]) => k === filter)[1]}` : ''}.</EmptyBox>;
   } else {
