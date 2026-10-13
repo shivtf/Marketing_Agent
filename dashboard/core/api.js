@@ -32,6 +32,12 @@ export async function apiFetch(path, { keepSession, ...options } = {}) {
   return res.json();
 }
 
+// Sign-out everywhere (dashboardbackend/app/accounts.py). Supabase keeps sessions alive when a password changes.
+// An admin signs a user out on every device (after a password reset or a removal) -> { ended }
+export const endUserSessions = (id) => apiFetch(`/admin/users/${encodeURIComponent(id)}/end-sessions`, { method: 'POST' });
+// After changing your own password: signs you out on your other devices, keeping this one -> { ended }
+export const endOtherSessions = () => apiFetch('/auth/end-other-sessions', { method: 'POST' });
+
 // GET /auth/me -> { id, email, role }; 401 when the token is invalid or expired
 export const getMe = (opts) => apiFetch('/auth/me', opts);
 // Frees the account for another sign-in right away (otherwise it frees up a few minutes after the last check-in).

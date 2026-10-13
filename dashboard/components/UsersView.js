@@ -1,10 +1,13 @@
 'use client';
 // Admin page: create employee accounts with a password the admin chooses, set new passwords, make employees admins
-// (or back), and remove accounts from the dashboard (they stay in Supabase). Employees can change their password from Profile.
+// (or back), and remove accounts from the dashboard (they stay in Supabase, listed under Removed users, and can be
+// restored). Employees can change their password from Profile. A password reset or a removal also signs the person
+// out on every device (backend /admin/users/{id}/end-sessions): Supabase would otherwise keep them signed in.
 import { useCallback, useEffect, useState } from 'react';
 import { CardHead, DataTable, Badge } from './ui';
 import { Icon } from './Icon';
 import * as admin from '@/core/admin';
+import { endUserSessions } from '@/core/api';
 import { getSession } from '@/core/auth';
 import { useConfirm } from './ConfirmDialog';
 
@@ -17,6 +20,7 @@ export default function UsersView() {
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
   const [meId, setMeId] = useState(null);
   const [removing, setRemoving] = useState(null); // id of the user being removed
+  const [restoring, setRestoring] = useState(null); // id of the user being restored
   const [changingRole, setChangingRole] = useState(null); // id of the user whose role is being changed
   const [confirmDialog, confirm] = useConfirm();
   const [showPw, setShowPw] = useState(false);
@@ -54,9 +58,49 @@ export default function UsersView() {
       setMsg({ text: `Created ${u.email}. Share the password with them; they can change it later from Profile.`, tone: 'ok' });
       await load();
     } catch (err) {
+      if (err.status === 409 && err.data?.removedId) {
+        setBusy(false);
+        await onRestore({ id: err.data.removedId, email: String(email).trim().toLowerCase() }, form);
+        return;
+      }
       setMsg({ text: err.message, tone: 'error' });
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Signs the user out on every device. -> '' when done, or why it failed (the main action already succeeded).
+  async function signOutEverywhere(u) {
+    try {
+      await endUserSessions(u.id);
+      return '';
+    } catch (err) {
+      return err.message;
+    }
+  }
+
+  // A removed account back on the dashboard, as an employee. `form`: the Add employee form, cleared on success when
+  // the restore was offered from it (the email belonged to a removed account).
+  async function onRestore(u, form) {
+    const ok = await confirm({
+      title: `Restore ${u.name || u.email}?`,
+      message: form
+        ? `${u.email} belongs to a removed account. Restore it instead? It comes back as an employee, with its old password; use Reset password to give them a new one.`
+        : `${u.email} will be able to sign in again, as an employee, with their old password. Use Reset password to give them a new one.`,
+      confirmLabel: 'Restore',
+    });
+    if (!ok) return;
+    setMsg({ text: '', tone: 'error' });
+    setRestoring(u.id);
+    try {
+      const updated = await admin.restoreUser(u.id);
+      setUsers((list) => (list.some((x) => x.id === u.id) ? list.map((x) => (x.id === u.id ? updated : x)) : [...list, updated]));
+      form?.reset();
+      setMsg({ text: `${u.email} is restored as an employee. Reset their password if they shouldn't use the old one.`, tone: 'ok' });
+    } catch (err) {
+      setMsg({ text: err.message, tone: 'error' });
+    } finally {
+      setRestoring(null);
     }
   }
 
@@ -71,7 +115,10 @@ export default function UsersView() {
     setMsg({ text: '', tone: 'error' });
     try {
       await admin.setUserPassword(u.id, password);
-      setMsg({ text: `New password saved for ${u.email}.`, tone: 'ok' });
+      const problem = await signOutEverywhere(u);
+      setMsg(problem
+        ? { text: `New password saved for ${u.email}, but they are still signed in where they were: ${problem}`, tone: 'error' }
+        : { text: `New password saved for ${u.email}. They were signed out on every device.`, tone: 'ok' });
       await load();
     } catch (err) {
       setMsg({ text: err.message, tone: 'error' });
@@ -138,8 +185,12 @@ export default function UsersView() {
     setRemoving(u.id);
     try {
       await admin.removeUser(u.id);
-      setUsers((list) => list.filter((x) => x.id !== u.id));
-      setMsg({ text: `${u.email} was removed.`, tone: 'ok' });
+      setUsers((list) => list.map((x) => (x.id === u.id ? { ...x, removed: true } : x)));
+      // Already locked out (banned, and both servers check removal on every call); this also ends their sessions.
+      const problem = await signOutEverywhere(u);
+      setMsg(problem
+        ? { text: `${u.email} was removed (they can no longer use the dashboard), but their sessions could not be ended: ${problem}`, tone: 'error' }
+        : { text: `${u.email} was removed and signed out on every device.`, tone: 'ok' });
     } catch (err) {
       setMsg({ text: err.message, tone: 'error' });
     } finally {
@@ -158,7 +209,23 @@ export default function UsersView() {
     );
   }
 
-  const rows = users.map((u) => (
+  const removedUsers = users.filter((u) => u.removed);
+  const removedRows = removedUsers.map((u) => (
+    <tr key={u.id}>
+      <td>{u.name || '—'}</td>
+      <td>{u.email}</td>
+      <td>{fmt(u.lastSignInAt)}</td>
+      <td>
+        <div className="user-actions">
+          <button className="btn" type="button" disabled={restoring === u.id} onClick={() => onRestore(u)}>
+            {restoring === u.id ? 'Restoring…' : 'Restore'}
+          </button>
+        </div>
+      </td>
+    </tr>
+  ));
+
+  const rows = users.filter((u) => !u.removed).map((u) => (
     <tr key={u.id}>
       <td>{u.name || '—'}</td>
       <td>{u.email}</td>
@@ -234,6 +301,16 @@ export default function UsersView() {
           head={['Name', 'Email', 'Role', 'Last sign-in', ''].map((h, i) => <th key={i}>{h}</th>)}
         />
       </section>
+      {status === 'ready' && removedUsers.length > 0 && (
+        <section className="card">
+          <CardHead icon="users" title={`Removed users (${removedUsers.length})`} />
+          <p className="muted small card-note">Removed from the dashboard and blocked from signing in; kept in Supabase. Restore brings one back as an employee.</p>
+          <DataTable
+            status="ready" what="removed users" rows={removedRows} emptyIcon="users" emptyText="No removed users."
+            head={['Name', 'Email', 'Last sign-in', ''].map((h, i) => <th key={i}>{h}</th>)}
+          />
+        </section>
+      )}
       {confirmDialog}
     </main>
   );

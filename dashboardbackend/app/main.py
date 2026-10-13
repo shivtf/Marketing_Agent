@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.accounts import router as accounts_router
 from app.agent import router as agent_router
 from app.blog_plan import router as blog_plan_router
 from app.auth import current_user, release
@@ -31,6 +32,7 @@ app.add_middleware(
 app.include_router(blog_plan_router)
 app.include_router(data_router)
 app.include_router(agent_router)
+app.include_router(accounts_router)
 
 
 @app.get("/health")

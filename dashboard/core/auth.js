@@ -46,7 +46,7 @@ export async function authFetch(path, options = {}) {
     throw new Error('Cannot reach the server.');
   }
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(body.error || 'Something went wrong. Please try again.'), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(body.error || 'Something went wrong. Please try again.'), { status: res.status, data: body });
   return body;
 }
 

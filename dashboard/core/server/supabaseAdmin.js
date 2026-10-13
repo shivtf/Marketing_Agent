@@ -43,6 +43,7 @@ export const summarize = (u) => ({
   role: ROLES.includes(u.app_metadata?.role) ? u.app_metadata.role : 'none', // 'none': can't use the dashboard
   createdAt: u.created_at,
   lastSignInAt: u.last_sign_in_at,
+  removed: !!u.app_metadata?.removed, // removed from the dashboard (banned), kept in Supabase; can be restored
 });
 
 // Wraps a handler so a missing env var or unexpected failure becomes a clean JSON 500.

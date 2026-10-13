@@ -2,6 +2,7 @@
 // Current + new + confirm password form on the profile page.
 import { useState } from 'react';
 import * as auth from '@/core/auth';
+import { endOtherSessions } from '@/core/api';
 
 export default function PasswordForm() {
   const [busy, setBusy] = useState(false);
@@ -20,7 +21,13 @@ export default function PasswordForm() {
     try {
       await auth.changePassword(current, next);
       form.reset();
-      setMsg({ text: 'Password updated.', tone: 'ok' });
+      // Supabase keeps other sessions alive after a password change: end them, so a stolen sign-in stops working.
+      try {
+        await endOtherSessions();
+        setMsg({ text: 'Password updated. You were signed out on your other devices.', tone: 'ok' });
+      } catch (err) {
+        setMsg({ text: `Password updated, but your other devices are still signed in: ${err.message}`, tone: 'error' });
+      }
     } catch (err) {
       setMsg({ text: err.message, tone: 'error' });
     } finally {
