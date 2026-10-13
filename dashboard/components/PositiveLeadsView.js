@@ -13,6 +13,7 @@ import { Badge, CardHead, SourceCell, ViewCell, DataTable, StatCards } from './u
 import { pad, fmtDate, toneOf, daysSince, REPLY_LABELS } from '@/core/format';
 
 const OVERDUE_DAYS = 3; // unanswered for this long -> shown in red
+const STUCK_HOURS = 3; // a reply unclassified for this long: the agent is probably stopped or stuck
 
 const GROUPS = [
   { key: 'positive', label: 'Positive', kind: 'positiveLead', icon: 'check', empty: 'No positive leads yet',
@@ -31,6 +32,7 @@ function PositiveStatCards({ section }) {
     <StatCards
       items={[
         { label: 'Positive Leads', icon: 'check', tone: 'green', value: positive, status, onRetry: reload },
+        // Same count as the Dashboard's Responses: every lead that replied in person, classified or not.
         { label: 'Leads Replied', icon: 'chat', value: data.repliedLeads, status, onRetry: reload },
         { label: 'Positive Rate', icon: 'bolt', tone: 'lavender', value: rate, status, onRetry: reload },
       ]}
@@ -105,8 +107,19 @@ function SearchAndSort({ view, setView }) {
   );
 }
 
-function PendingNote({ count }) {
+// Replies the agent hasn't classified yet. Usually a short wait; when the oldest has waited hours, say so plainly.
+function PendingNote({ count, since }) {
   if (!count) return null;
+  const replies = count === 1 ? '1 reply' : `${count} replies`;
+  const hours = since ? (Date.now() - new Date(since).getTime()) / 3600000 : 0;
+  if (hours >= STUCK_HOURS) {
+    return (
+      <div className="info-note warn" role="status">
+        {replies} {count === 1 ? 'has' : 'have'} been waiting to be classified since {fmtDate(since)}. The agent
+        classifies replies while it runs: check that it is running.
+      </div>
+    );
+  }
   return (
     <div className="info-note" role="status">
       {count === 1 ? '1 new reply is' : `${count} new replies are`} still being classified and will appear here shortly.
@@ -147,7 +160,7 @@ export default function PositiveLeadsView() {
           <SearchAndSort view={positiveView} setView={setPositiveView} />
         </div>
         <p className="muted small group-hint">{group.hint}</p>
-        {status === 'ready' && <PendingNote count={data.pending} />}
+        {status === 'ready' && <PendingNote count={data.pending} since={data.pendingSince} />}
         <DataTable
           status={status}
           emptyIcon={group.icon}

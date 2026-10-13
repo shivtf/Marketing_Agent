@@ -234,7 +234,11 @@ async def positive_leads() -> dict:
               from emails e where e.reply_id = r.id
             ) a on true"""  # noqa: S608
     )
-    pending = await _value("select count(*) from replies where label is null")  # not classified yet
+    # Replies not classified yet, and since when: the agent classifies them while it runs, so an old one means it is
+    # stopped or stuck.
+    pending = (await _rows("select count(*) as pending, min(received_at) as since from replies where label is null"))[0]
+    # Same count as the dashboard's Responses: every lead with a reply written by a person, classified or not.
+    replied = await _value(f"select count(*) from ({_LEADS}) l where status = 'Responded'")  # noqa: S608
     groups: dict[str, list[dict]] = {"positive": [], "review": [], "questions": []}
     for r in rows:
         r["preview"] = _preview(r.pop("body"))
@@ -249,8 +253,9 @@ async def positive_leads() -> dict:
             groups["questions"].append(r)
     return {
         **{k: _follow_up_order(v) for k, v in groups.items()},
-        "repliedLeads": len(rows),
-        "pending": pending or 0,
+        "repliedLeads": replied or 0,
+        "pending": pending["pending"] or 0,
+        "pendingSince": pending["since"],
     }
 
 
@@ -285,7 +290,8 @@ async def lead(lead_id: str) -> dict:
     except asyncpg.DataError as exc:
         raise HTTPException(404, "Not found") from exc
     reply = await (await _pg()).fetchrow(
-        f"select id, label, review_note from ({_LATEST_HUMAN_REPLY}) r where contact_id = $1::uuid",  # noqa: S608
+        f"select id, label, review_note, received_at, body from ({_LATEST_HUMAN_REPLY}) r "  # noqa: S608
+        "where contact_id = $1::uuid",
         lead_id,
     )
     email = await (await _pg()).fetchrow(
@@ -302,7 +308,13 @@ async def lead(lead_id: str) -> dict:
     )
     row["replyLabel"] = reply["label"] if reply else None
     row["reviewReason"] = _review_reason(reply["review_note"]) if reply else None
-    row["notes"] = None
+    # The reply the lead is judged on: what the person wrote (quoted earlier mail left out; the full thread is in
+    # History). Falls back to the whole body when everything in it looks quoted.
+    row["latestReply"] = (
+        {"id": str(reply["id"]), "receivedAt": reply["received_at"].isoformat(),
+         "text": _strip_quoted(reply["body"]) or (reply["body"] or "").strip()}
+        if reply else None
+    )
     return row
 
 

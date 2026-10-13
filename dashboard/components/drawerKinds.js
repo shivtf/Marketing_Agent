@@ -2,7 +2,7 @@
 //   paged    -> a paged list (useList): Previous/Next step through the page on screen, or
 //   section + list(sectionData, leadsFilter, positiveView) -> items for Previous/Next,
 // and load(id) -> detail
-//   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox? }
+//   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox? }  (no body = no body section)
 import { Icon } from './Icon';
 import { Badge, StatusBadge, SourceCell, ExtLink, MetaRow } from './ui';
 import { pad, fmtDate, toneOf, REPLY_LABELS, replyLabel } from '@/core/format';
@@ -43,7 +43,10 @@ export function getKinds(goto) {
         action: c
           ? <ActionButton icon="mail" onClick={() => goto('history', c.type, c.id)}>Open email conversation</ActionButton>
           : <div className="muted small">No email conversation yet.</div>,
-        bodyTitle: 'Notes', body: d.notes, bodyBox: true,
+        // The reply the lead is judged on, as the person wrote it (quoted earlier mail is left out: the full thread is
+        // one click away in History). Leads without a reply have no body section.
+        bodyTitle: d.latestReply ? `Their latest reply · ${fmtDate(d.latestReply.receivedAt)}` : null,
+        body: d.latestReply?.text ?? null,
       };
     },
   };

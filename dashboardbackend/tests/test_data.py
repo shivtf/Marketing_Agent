@@ -115,13 +115,17 @@ def _reply(id_, label, body="Hi Alex,\n\nSounds good.\n\nThanks", note=None, at=
 
 @pytest.fixture
 def positive_rows(monkeypatch):
-    """Serve the given rows to /leads/positive, with 2 replies still waiting to be classified."""
+    """Serve the given rows to /leads/positive, with 2 replies still waiting to be classified (the oldest since
+    Oct 1) and 9 leads that replied in person (classified or not)."""
     def use(rows):
-        async def fake_rows(*_):
+        async def fake_rows(sql, *_):
+            if "label is null" in sql:
+                return [{"pending": 2, "since": "2026-10-01T08:00:00+00:00"}]
             return [dict(r) for r in rows]
 
-        async def fake_value(*_):
-            return 2
+        async def fake_value(sql, *_):
+            assert "status = 'Responded'" in sql
+            return 9
 
         monkeypatch.setattr(data, "_rows", fake_rows)
         monkeypatch.setattr(data, "_value", fake_value)
@@ -143,7 +147,8 @@ def test_positive_leads_groups(positive_rows):
     assert [r["id"] for r in res["review"]] == ["b", "g"]  # equal wait: stable sort keeps input order
     assert {r["id"]: r["reviewReason"] for r in res["review"]}["b"] == "Low confidence (0.42)"
     assert [r["id"] for r in res["questions"]] == ["c"]
-    assert res["repliedLeads"] == 7 and res["pending"] == 2
+    # repliedLeads matches the dashboard's Responses (every lead that replied in person), not just the 7 classified
+    assert res["repliedLeads"] == 9 and res["pending"] == 2 and res["pendingSince"] == "2026-10-01T08:00:00+00:00"
     assert all("body" not in r and "reviewNote" not in r and "answerQueued" not in r for r in res["positive"])
 
 
@@ -243,3 +248,49 @@ def test_history_filters_are_checked(db):
     assert client.get("/emails/sent?status=delivered", headers=_auth()).status_code == 422
     assert client.get("/emails/replies?label=spam", headers=_auth()).status_code == 422
     assert client.get(f"/emails/sent?q={'x' * 101}", headers=_auth()).status_code == 422
+
+
+# ---------- One lead: the reply it is judged on ----------
+
+
+@pytest.fixture
+def lead_db(monkeypatch):
+    """Fake pool for /leads/{id}: the lead, its latest human reply (`reply`, None = no reply) and latest sent email."""
+    import datetime as dt
+
+    state = {"reply": {"id": "r1", "label": "interested", "review_note": None,
+                       "received_at": dt.datetime(2026, 10, 5, 9, 30, tzinfo=dt.UTC),
+                       "body": "Hi Alex,\n\nYes, let's talk.\n\nOn Mon, 5 Oct 2026, Alex <a@x.co> wrote:\n> Interested?"}}
+
+    async def one(*_):
+        return {"id": "a", "number": 1, "name": "Sam"}
+
+    class Pool:
+        async def fetchrow(self, sql, *_):
+            return state["reply"] if "review_note" in sql else {"id": "e1"}
+
+    async def pg():
+        return Pool()
+
+    monkeypatch.setattr(data, "_one", one)
+    monkeypatch.setattr(data, "_pg", pg)
+    return state
+
+
+def test_lead_includes_what_the_person_wrote(lead_db):
+    res = client.get("/leads/7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d", headers=_auth()).json()
+    assert res["latestReply"] == {"id": "r1", "receivedAt": "2026-10-05T09:30:00+00:00",
+                                  "text": "Hi Alex,\n\nYes, let's talk."}  # quoted earlier mail left out
+    assert res["conversation"] == {"type": "reply", "id": "r1"} and "notes" not in res
+
+
+def test_lead_reply_that_is_all_quoted_is_shown_whole(lead_db):
+    lead_db["reply"]["body"] = "> only quoted text"
+    res = client.get("/leads/7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d", headers=_auth()).json()
+    assert res["latestReply"]["text"] == "> only quoted text"
+
+
+def test_lead_without_a_reply(lead_db):
+    lead_db["reply"] = None
+    res = client.get("/leads/7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d", headers=_auth()).json()
+    assert res["latestReply"] is None and res["conversation"] == {"type": "sent", "id": "e1"}
