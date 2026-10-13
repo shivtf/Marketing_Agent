@@ -110,9 +110,16 @@ export function Header({ user }) {
     try { localStorage.setItem('theme', next); } catch { /* storage unavailable */ }
   };
 
+  // Ending the Supabase session is what frees the account: the backend lets another device take it once the session
+  // no longer exists (dashboardbackend/app/auth.py). So the backend is told in the background, not waited for: it
+  // can be slow (several database round trips, a sleeping server), and sign-out must not wait on it. Started first so
+  // it still carries this session's token; if it arrives after the session ended, it is refused, which is harmless.
+  const [signingOut, setSigningOut] = useState(false);
   const signOut = async () => {
-    await releaseAccount().catch(() => {}); // signing out works even when the backend can't be reached
-    await auth.signOut();
+    if (signingOut) return;
+    setSigningOut(true);
+    releaseAccount().catch(() => {});
+    await auth.signOut().catch(() => {}); // clears the session in this browser even when Supabase can't be reached
     router.replace('/login');
   };
 
@@ -132,7 +139,9 @@ export function Header({ user }) {
           {menu && (
             <div className="menu" role="menu">
               <Link className="menu-item" role="menuitem" href="/profile" onClick={() => setMenu(false)}><Icon name="user" /> Profile</Link>
-              <button className="menu-item" role="menuitem" type="button" onClick={signOut}><Icon name="logout" /> Sign out</button>
+              <button className="menu-item" role="menuitem" type="button" disabled={signingOut} aria-busy={signingOut} onClick={signOut}>
+                <Icon name="logout" /> {signingOut ? 'Signing out…' : 'Sign out'}
+              </button>
             </div>
           )}
         </div>
