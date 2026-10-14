@@ -16,6 +16,7 @@ const DAY = 86400000;
 const FIRST_DAY = '2000-01-01';
 const LAST_DAY = '2099-12-31';
 const MAX_DAYS = 366;
+const MAX_NAME = 400;
 // The server's answer when someone else changed the campaign since this page loaded it.
 const isConflict = (err) => err.status === 409;
 
@@ -101,7 +102,7 @@ function CampaignDialog({ initial, onClose, onSaved, onConflict }) {
         </div>
         <label className="field">
           <span>Campaign name</span>
-          <input value={form.campaignName} onChange={set('campaignName')} maxLength={200} autoComplete="off" placeholder="e.g. Diwali AOSP services push" autoFocus required />
+          <input value={form.campaignName} onChange={set('campaignName')} maxLength={MAX_NAME} autoComplete="off" placeholder="e.g. Diwali AOSP services push" autoFocus required />
         </label>
         <div className="campaign-dates">
           <label className="field"><span>Start date</span><input type="date" value={form.startDate} min={FIRST_DAY} max={LAST_DAY} onChange={set('startDate')} required /></label>
@@ -109,7 +110,7 @@ function CampaignDialog({ initial, onClose, onSaved, onConflict }) {
         </div>
         <div className="muted small campaign-length">{days ? `Runs for ${plural(days, 'day')}` : ' '}</div>
         <label className="field">
-          <span>Details <span className="muted small">(optional)</span></span>
+          <span>Details</span>
           <textarea value={form.campaignDetail} onChange={set('campaignDetail')} maxLength={5000} rows={5} placeholder="Goal, audience, channels…" />
           <span className="muted small campaign-count">{form.campaignDetail.length}/5000</span>
         </label>
