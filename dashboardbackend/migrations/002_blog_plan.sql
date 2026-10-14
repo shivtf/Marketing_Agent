@@ -1,5 +1,6 @@
--- Blog plan (app/blog_plan.py, BLOG_PLAN.md): one row per blog brief uploaded as JSON on the Blogs page.
--- The backend also creates this on first use; running it here by hand is optional. Run once in the Supabase SQL editor.
+-- Blog plan: one row per blog brief uploaded as JSON on the Blogs page.
+-- No longer used: the Blogs page now stores weekly files in Supabase Storage (dashboard/app/api/blogs/weekly-files)
+-- and the backend code for this table was removed. Kept as a record of the table, which still exists in the database.
 create table if not exists public.blog_plan (
   id              uuid primary key default gen_random_uuid(),
   external_id     text not null unique,           -- the JSON "id", e.g. BLG-001

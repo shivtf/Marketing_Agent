@@ -61,13 +61,6 @@ export function toSection(query, empty) {
   return { status, data: query.data ?? empty, reload: () => query.refetch(), fetching: query.isFetching };
 }
 
-// Combined status of several sections: any error wins, then any loading.
-export function combinedStatus(...sections) {
-  if (sections.some((s) => s.status === 'error')) return 'error';
-  if (sections.some((s) => s.status === 'loading')) return 'loading';
-  return 'ready';
-}
-
 const FilterCtx = createContext(null);
 export const useLeadsFilter = () => useContext(FilterCtx);
 

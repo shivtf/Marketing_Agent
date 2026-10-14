@@ -6,8 +6,6 @@ export async function getSession() {
   return data.session;
 }
 
-export const isAuthenticated = async () => !!(await getSession());
-
 // Roles live in app_metadata, which only the server can write.
 export const isAdmin = (session) => session?.user?.app_metadata?.role === 'admin';
 

@@ -11,9 +11,7 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 | `GET /emails/sent`, `/emails/sent/{id}`                    | Bearer | sent emails                                  |
 | `GET /emails/replies`, `/emails/replies/{id}`              | Bearer | replies, with the email each one answers     |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |
-| `GET /agent`, `POST /agent/start`, `POST /agent/stop`      | Bearer | agent status / Start / Stop, forwarded to the pipeline control API (`pipeline-api.md`) |
-| `GET /blogs/plan`, `GET /blogs/plan/{id}`                  | Bearer | the blog plan (briefs by date) and one brief; see `BLOG_PLAN.md` |
-| `POST /blogs/plan/import`, `POST /blogs/plan/{id}/cancel`  | Admin  | upload a blog plan JSON (`?dry_run=true` checks only), cancel a brief |
+| `GET /agent`, `POST /agent/start`, `POST /agent/stop`      | Bearer | agent status / Start / Stop, forwarded to the pipeline control API |
 
 Protect a new route with `user: dict = Depends(current_user)` (`app/auth.py`).
 
@@ -24,9 +22,9 @@ lead / outreach / content services ──write──▶ Supabase Postgres ◀─
 ```
 
 1. The pipeline services (`services/*`) write companies, contacts, emails, replies and content posts to
-   Supabase Postgres (`supabase/migrations/0002_core.sql`). This backend never writes to those tables.
+   Supabase Postgres. This backend never writes to those tables.
 2. The dashboard logs the user in with Supabase Auth and calls this API through `apiFetch()` in
-   `eval/dashboard/core/api.js`, sending `Authorization: Bearer <access_token>`.
+   `dashboard/core/api.js`, sending `Authorization: Bearer <access_token>`.
 3. Every route in `app/data.py` runs `current_user` first (`app/auth.py`), which verifies the token's
    signature and expiry. A missing or invalid token gets a `401`.
 4. The route runs a SQL query over `DATABASE_URL` (asyncpg pool, created on first request).
@@ -37,7 +35,7 @@ lead / outreach / content services ──write──▶ Supabase Postgres ◀─
    - **sent emails** are `emails` with status `sent` or `bounced`; `sent` shows as Delivered, `bounced` as Failed;
    - **blogs** are `content_posts`; `published` shows as Posted, anything else as Not Posted.
 5. Rows are converted to camelCase JSON (`sent_at` becomes `sentAt`) so they match the shapes the
-   dashboard used before (`eval/dashboard/core/data.js`). List routes leave out heavy fields
+   dashboard expects. List routes leave out heavy fields
    (email and blog bodies); the `/{id}` routes include them.
 6. Start/Stop (`app/agent.py`) don't touch the database: they call the pipeline control API with
    `AGENT_API_TOKEN` (the API's `PIPELINE_API_TOKEN`; that name works too) and `AGENT_API_URL` (defaults to the
@@ -49,12 +47,12 @@ one-line `apiFetch()` function for it in `api.js`.
 ## Run
 
 ```bash
-cd eval/dashboardbackend
+cd dashboardbackend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in SUPABASE_URL and DATABASE_URL (the pooled Postgres connection string)
+# create .env with SUPABASE_URL and DATABASE_URL (the pooled Postgres connection string)
 uvicorn app.main:app --reload --port 8000
-pytest
+python -m pytest
 ```
 
 Tokens are verified against the project's JWKS (`/auth/v1/.well-known/jwks.json`); set `SUPABASE_JWT_SECRET`

@@ -9,11 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.accounts import router as accounts_router
 from app.agent import router as agent_router
-from app.blog_plan import router as blog_plan_router
 from app.auth import current_user, release
 from app.data import router as data_router
 
-load_dotenv()  # reads eval/dashboardbackend/.env when started from that folder
+load_dotenv()  # reads dashboardbackend/.env when started from that folder
 
 app = FastAPI(title="Dashboard backend")
 app.add_middleware(
@@ -28,8 +27,6 @@ app.add_middleware(
 )
 
 
-# Before data_router: its /blogs/{blog_id} would otherwise take /blogs/plan.
-app.include_router(blog_plan_router)
 app.include_router(data_router)
 app.include_router(agent_router)
 app.include_router(accounts_router)
