@@ -1,6 +1,6 @@
 'use client';
 // Campaign page: summary (running now, upcoming, total), filters + search, and one card per campaign (status, dates,
-// progress while it runs, details). Everyone signed in can see them; admins add and edit in a dialog, switch active
+// progress while it runs, details, when it was created). Everyone signed in can see them; admins add and edit in a dialog, switch active
 // on or off, and delete. Data: app/api/campaigns -> Supabase table public.campaign.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StatCards, Badge, Skeleton, ErrorBox, EmptyBox } from './ui';
@@ -8,6 +8,7 @@ import { Icon } from './Icon';
 import { useConfirm } from './ConfirmDialog';
 import * as campaigns from '@/core/campaigns';
 import { getSession, isAdmin } from '@/core/auth';
+import { fmtDate } from '@/core/format';
 
 const EMPTY = { campaignName: '', campaignDetail: '', startDate: '', endDate: '', isActive: true };
 const DAY = 86400000;
@@ -169,6 +170,7 @@ function CampaignCard({ c, state, admin, working, onToggle, onEdit, onDelete }) 
           {long && <button className="detail-toggle" type="button" onClick={() => setOpen(!open)}>{open ? 'Show less' : 'Show more'}</button>}
         </div>
       ) : <p className="muted small campaign-detail-empty">No details.</p>}
+      {c.createdAt && <div className="muted small campaign-created">Created {fmtDate(c.createdAt)}</div>}
       {admin && (
         <div className="campaign-foot">
           <label className="campaign-toggle">

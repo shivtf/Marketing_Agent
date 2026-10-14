@@ -387,6 +387,8 @@ td.name .badge { margin-top: 4px; }
 .detail-toggle { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
 .detail-toggle:hover { text-decoration: underline; }
 .detail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.campaign-created { margin-top: auto; padding-top: 2px; }
+.campaign-created + .campaign-foot { margin-top: 0; }
 .campaign-foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .campaign-toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
 .campaign-actions { display: flex; gap: 6px; }
