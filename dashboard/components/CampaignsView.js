@@ -16,7 +16,7 @@ const DAY = 86400000;
 const FIRST_DAY = '2000-01-01';
 const LAST_DAY = '2099-12-31';
 const MAX_DAYS = 366;
-const MAX_NAME = 400;
+const MAX_NAME = 200;
 // The server's answer when someone else changed the campaign since this page loaded it.
 const isConflict = (err) => err.status === 409;
 

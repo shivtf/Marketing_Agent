@@ -16,7 +16,7 @@ const isDay = (s) => {
 export const FIRST_DAY = '2000-01-01';
 export const LAST_DAY = '2099-12-31';
 export const MAX_DAYS = 366;
-export const MAX_NAME = 400; // also the database's limit (migrations/006_campaign_name_400.sql)
+export const MAX_NAME = 200; // also the database's limit (migrations/003_campaign.sql)
 const days = (start, end) => Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1;
 
 // Body from the page -> { row } ready to save, or { error: Response }. `partial` (an update) checks only the fields
@@ -87,10 +87,7 @@ export function dbError(err, doing) {
   }
   if (err?.code === '23514') { // a check in the table said no: tell the two checks apart by name
     if (/campaign_dates_in_order/.test(err.message || '')) return fail('The end date must be on or after the start date.', 400);
-    if (/campaign_name/.test(err.message || '')) {
-      console.error('[campaigns]', doing, err.message);
-      return fail(`The database still allows shorter campaign names than ${MAX_NAME} characters. Run dashboardbackend/migrations/006_campaign_name_400.sql in the Supabase SQL editor.`, 500);
-    }
+    if (/campaign_name/.test(err.message || '')) return fail(`The campaign name can be at most ${MAX_NAME} characters.`, 400);
   }
   console.error('[campaigns]', doing, err?.message);
   return fail(`Could not ${doing}.`, 500);
