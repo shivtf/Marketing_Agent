@@ -1,5 +1,5 @@
 // All data access lives here. Everything comes from the backend (dashboardbackend/app).
-import { endSession, getSession, NO_ACCESS } from './auth';
+import { authFetch, endSession, getSession, NO_ACCESS } from './auth';
 
 // ---------- Backend (eval/dashboardbackend) ----------
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -48,13 +48,14 @@ const qs = (params) => {
   return q ? `?${q}` : '';
 };
 
-// ---------- Agent (dashboardbackend/app/agent.py -> pipeline control API, see pipeline-api.md) ----------
-// -> { desiredState, state: 'running' | 'stopped' | 'offline', online, inSync, requestedBy, currentPass, nextPassAt,
-//      lastPass, sendingEnabled, testMode, ... }. Start/Stop are requests the office machine applies within seconds.
-
-export const getAgent = () => apiFetch('/agent');
-export const startAgent = () => apiFetch('/agent/start', { method: 'POST' });
-export const stopAgent = () => apiFetch('/agent/stop', { method: 'POST' });
+// ---------- Agent control (app/api/ca -> the Campaign Agent's gateway, docs/dashboard-pause-resume.md) ----------
+// The Campaign Agent, which also starts and stops the Marketing Agent. The dashboard never controls the Marketing
+// Agent itself (docs/dashboard-integration.md).
+// -> { desiredState: 'running' | 'paused', actualState, inSync, requestedBy, requestedAt, stateSince,
+//      agentStatus: 'idle' | 'busy' | 'paused', lastSeen, online }. Pause/resume is applied within seconds.
+export const getAgent = () => authFetch('/api/ca');
+export const pauseAgent = () => authFetch('/api/ca/state', { method: 'POST', body: JSON.stringify({ state: 'paused' }) });
+export const resumeAgent = () => authFetch('/api/ca/state', { method: 'POST', body: JSON.stringify({ state: 'running' }) });
 
 // List routes are paged: -> { items, total, page, limit } (blogs also carry `posted`). Filters run on the server.
 

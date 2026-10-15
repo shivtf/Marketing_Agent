@@ -1,71 +1,53 @@
 'use client';
-// The marketing agent's status, shared by the Dashboard's Agent Control card and the sidebar's Agent Status box.
+// The agent's status, shared by the Dashboard's Agent Control card and the sidebar's Agent Status box.
 import { useState } from 'react';
 import { useUpdateSection } from './DataProvider';
-import { Badge } from './ui';
 import { useConfirm } from './ConfirmDialog';
 import * as api from '@/core/api';
-import { fmtDate } from '@/core/format';
 
 // ---------- Agent Control ----------
-// There is one marketing agent, on the office machine (approvals happen in Slack). Start/Stop are requests: the agent
-// applies them within about 5 s (stopping can take up to 30 s), so the status is polled until inSync (DataProvider).
+// Pause / resume the Campaign Agent (docs/dashboard-pause-resume.md). It runs on the office machine and also starts and
+// stops the Marketing Agent: pausing it stops the Marketing Agent too, resuming starts it again only if it was running
+// when the pause came. Pause/resume are requests the agent applies within a few seconds (a request already running
+// finishes first), so the status is polled until inSync (DataProvider).
 
-export const STEPS = {
-  inbox: 'Reading the inbox', replies: 'Classifying replies', send: 'Sending approved emails',
-  followups: 'Drafting follow-ups', leads: 'Finding leads', blog: 'Writing the blog post',
-};
-export const OUTCOMES = { succeeded: 'Succeeded', failed: 'Failed', stopped: 'Stopped' };
-
-// Badge, note and button for the pipeline status (pipeline-api.md, "Suggested UI").
+// Badge, note and button for the status from app/api/ca.
 export function describeAgent(a) {
   const wantsRun = a.desiredState === 'running';
   if (!a.online) {
-    return { badge: 'Offline', wantsRun, note: `Office machine offline.${wantsRun ? ' It will start when it comes back.' : ''}` };
+    return { badge: 'Offline', wantsRun, note: `The assistant is offline. Requests wait until the office machine is back.${wantsRun ? '' : ' It stays paused.'}` };
   }
   if (!a.inSync) {
     return {
-      badge: wantsRun ? 'Starting…' : 'Stopping…', wantsRun, busy: true,
-      note: wantsRun ? 'Starting within a few seconds.' : 'Stopping after the current step (up to 30 s).',
+      badge: wantsRun ? 'Resuming…' : 'Pausing…', wantsRun, busy: true,
+      note: wantsRun ? 'Resuming within a few seconds.' : 'Pausing after the current request finishes.',
     };
   }
-  if (a.state === 'running') {
-    const step = a.currentPass && (STEPS[a.currentPass.step] || a.currentPass.step);
-    const note = step ? `${step}…` : a.nextPassAt ? `Next pass at ${fmtDate(a.nextPassAt, 'table')}.` : 'Running.';
-    return { badge: 'Running', wantsRun, note };
+  if (a.actualState === 'paused') {
+    return { badge: 'Paused', wantsRun, note: 'No new requests are taken, and the Marketing Agent is stopped. Nothing is lost.' };
   }
-  return { badge: 'Stopped', wantsRun, note: 'Nothing is searched, drafted or sent until you press Start.' };
+  return { badge: 'Running', wantsRun, note: a.agentStatus === 'busy' ? 'Working on a request…' : 'Waiting for requests.' };
 }
 
-// Whether real emails go out: the most important fact on the card, so it gets a badge next to the state.
-export function EmailModeBadge({ agent }) {
-  if (agent.sendingEnabled === false) return <Badge text="Sending off" tone="gray" title="Approved emails are not sent at all." />;
-  if (agent.testMode) return <Badge text="Test mode" tone="blue" title="Every email goes to the test inbox, not to the real contact." />;
-  if (agent.testMode === false) return <Badge text="Live emails" tone="red" title="Approved emails go to the real contacts." />;
-  return null;
-}
+// Who may press what: everyone may pause (the safety brake), only admins resume (it can start the Marketing Agent
+// again, which sends emails). app/api/ca/state enforces the same. -> 'pause' | 'resume' | null (nothing to press)
+export const agentButton = (view, admin) => (view.wantsRun ? 'pause' : admin ? 'resume' : null);
+export const ADMINS_RESUME = 'Only admins can resume the agent.';
+export const BUTTON_LABEL = { pause: 'Pause Agent', resume: 'Resume Agent' };
 
-// Approved emails go to the real contacts (the "Live emails" badge above).
-const sendsLiveEmails = (agent) => agent?.testMode === false && agent?.sendingEnabled !== false;
-
-// Who may press what: only admins start the agent (it can send real emails), everyone may stop it (the safety brake;
-// the backend enforces the same in dashboardbackend/app/agent.py). -> 'stop' | 'start' | null (nothing to press)
-export const agentButton = (view, admin) => (view.wantsRun ? 'stop' : admin ? 'start' : null);
-export const ADMINS_START = 'Only admins can start the agent.';
-
-// Start / Stop. The answer replaces the cached status right away; DataProvider then polls until it is in sync.
-// Starting with live emails asks first. Render `confirmDialog` once where the hook is used.
+// Pause / Resume. The answer replaces the cached status right away; DataProvider then polls until it is in sync.
+// Pausing asks first, since it also stops the Marketing Agent mid-pass. Render `confirmDialog` once where the hook is used.
 export function useAgentAction() {
   const update = useUpdateSection();
   const [confirmDialog, confirm] = useConfirm();
   const [acting, setActing] = useState(false);
   const [error, setError] = useState('');
-  async function act(action, agent) {
-    if (action === 'start' && sendsLiveEmails(agent)) {
+  async function act(action) {
+    if (action === 'pause') {
       const ok = await confirm({
-        title: 'Start the agent with live emails?',
-        message: 'Approved emails will go to the real contacts, not the test inbox.',
-        confirmLabel: 'Start Agent',
+        title: 'Pause the agent?',
+        message: 'The Campaign Agent takes no new requests, and the Marketing Agent stops (the pass in progress is cancelled). Nothing is lost; resuming starts them again.',
+        confirmLabel: 'Pause Agent',
         danger: true,
       });
       if (!ok) return;
@@ -73,7 +55,7 @@ export function useAgentAction() {
     setError('');
     setActing(true);
     try {
-      const fresh = await (action === 'start' ? api.startAgent() : api.stopAgent());
+      const fresh = await (action === 'pause' ? api.pauseAgent() : api.resumeAgent());
       update('agent', () => fresh);
     } catch (err) {
       setError(`Couldn't ${action} the agent: ${err.message}`);

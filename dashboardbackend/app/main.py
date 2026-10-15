@@ -8,7 +8,6 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.accounts import router as accounts_router
-from app.agent import router as agent_router
 from app.auth import current_user, release
 from app.data import router as data_router
 
@@ -28,7 +27,6 @@ app.add_middleware(
 
 
 app.include_router(data_router)
-app.include_router(agent_router)
 app.include_router(accounts_router)
 
 

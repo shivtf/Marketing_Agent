@@ -1,8 +1,10 @@
 'use client';
 // Campaign page: summary (running now, upcoming, total), filters + search, and one card per campaign (status, dates,
-// progress while it runs, details, when it was created). Everyone signed in can see them; admins add and edit in a dialog, switch active
+// progress while it runs, details, when it was created, a link to its review with the Campaign Agent at /campaign/[id]).
+// Everyone signed in can see them; admins add and edit in a dialog, switch active
 // on or off, and delete. Data: app/api/campaigns -> Supabase table public.campaign.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { StatCards, Badge, Skeleton, ErrorBox, EmptyBox } from './ui';
 import { Icon } from './Icon';
 import { useConfirm } from './ConfirmDialog';
@@ -172,6 +174,9 @@ function CampaignCard({ c, state, admin, working, onToggle, onEdit, onDelete }) 
         </div>
       ) : <p className="muted small campaign-detail-empty">No details.</p>}
       {c.createdAt && <div className="muted small campaign-created">Created {fmtDate(c.createdAt)}</div>}
+      <Link className="btn soft small-btn campaign-review" href={`/campaign/${c.id}`}>
+        <Icon name="eye" /> {admin ? 'Review with the assistant' : 'See what the assistant made'}
+      </Link>
       {admin && (
         <div className="campaign-foot">
           <label className="campaign-toggle">

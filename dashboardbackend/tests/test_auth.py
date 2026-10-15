@@ -78,12 +78,10 @@ def test_dashboard_roles_are_allowed(role):
     assert _get(_token(app_metadata={"role": role})).status_code == 200
 
 
-def test_data_and_agent_routes_refuse_an_account_without_a_role():
+def test_data_routes_refuse_an_account_without_a_role():
     headers = {"Authorization": f"Bearer {_token(app_metadata={})}"}
     assert client.get("/leads", headers=headers).status_code == 403
-    assert client.get("/agent", headers=headers).status_code == 403
-    assert client.post("/agent/start", headers=headers).status_code == 403
-    assert client.post("/agent/stop", headers=headers).status_code == 403
+    assert client.get("/emails/replies", headers=headers).status_code == 403
 
 
 def test_account_without_a_role_never_takes_the_sign_in(presence):

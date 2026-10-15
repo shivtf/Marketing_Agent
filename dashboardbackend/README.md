@@ -11,7 +11,6 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 | `GET /emails/sent`, `/emails/sent/{id}`                    | Bearer | sent emails                                  |
 | `GET /emails/replies`, `/emails/replies/{id}`              | Bearer | replies, with the email each one answers     |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |
-| `GET /agent`, `POST /agent/start`, `POST /agent/stop`      | Bearer | agent status / Start / Stop, forwarded to the pipeline control API |
 
 Protect a new route with `user: dict = Depends(current_user)` (`app/auth.py`).
 
@@ -37,9 +36,8 @@ lead / outreach / content services ──write──▶ Supabase Postgres ◀─
 5. Rows are converted to camelCase JSON (`sent_at` becomes `sentAt`) so they match the shapes the
    dashboard expects. List routes leave out heavy fields
    (email and blog bodies); the `/{id}` routes include them.
-6. Start/Stop (`app/agent.py`) don't touch the database: they call the pipeline control API with
-   `AGENT_API_TOKEN` (the API's `PIPELINE_API_TOKEN`; that name works too) and `AGENT_API_URL` (defaults to the
-   Render URL). The token never reaches the browser.
+6. There is no agent control here. The dashboard never starts or stops the Marketing Agent: the Campaign Agent does,
+   and the dashboard pauses or resumes the Campaign Agent through its own Next.js routes (`dashboard/app/api/ca`).
 
 To add a new data route, write a query in `app/data.py`, return it through `_rows()` / `_one()`, then add a
 one-line `apiFetch()` function for it in `api.js`.

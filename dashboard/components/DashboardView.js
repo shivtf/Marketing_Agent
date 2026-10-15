@@ -1,12 +1,12 @@
 'use client';
 // Page 1, laid out like the design mock: a greeting; lead stat cards, the Lead Pipeline and Recent Leads on the left;
-// Agent Control and Leads by Source on the right. Everything shown comes from /agent, /leads/stats and /leads.
+// Agent Control and Leads by Source on the right. Everything shown comes from /api/ca, /leads/stats and /leads.
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { OpenRow } from './OpenRow';
 import { useList, useSection } from './DataProvider';
 import { StatusBadge, Skeleton, ErrorBox, DataTable, Pager } from './ui';
-import { ADMINS_START, agentButton, describeAgent, EmailModeBadge, OUTCOMES, useAgentAction } from './agent';
+import { ADMINS_RESUME, agentButton, BUTTON_LABEL, describeAgent, useAgentAction } from './agent';
 import { getSession, isAdmin } from '@/core/auth';
 import { fmtDate, sourceLabel, toneOf } from '@/core/format';
 
@@ -192,7 +192,7 @@ function RecentLeads() {
   );
 }
 
-// ---------- Agent Control (Start: admins only; Stop: everyone) ----------
+// ---------- Agent Control (Pause: everyone; Resume: admins only) ----------
 function AgentControl() {
   const { status, data, reload } = useSection('agent');
   const { act, acting, error, confirmDialog } = useAgentAction();
@@ -205,34 +205,30 @@ function AgentControl() {
   else {
     const v = describeAgent(data);
     const button = agentButton(v, admin);
-    const last = data.lastPass;
-    const who = data.requestedByName || data.requestedBy?.replace(/^dashboard:/, '');
-    const since = data.inSync && data.stateSince && (data.state === 'running' || data.state === 'stopped');
+    const paused = data.actualState === 'paused';
     const rows = [
       ['Current task', v.note],
-      since && [data.state === 'running' ? 'Running since' : 'Stopped at', shortTime(data.stateSince)],
-      who && [v.wantsRun ? 'Started by' : 'Stopped by', who],
-      last && ['Last run', shortTime(last.finishedAt || last.startedAt)],
-      last && ['Result', OUTCOMES[last.outcome] || last.outcome],
+      data.inSync && data.stateSince && [paused ? 'Paused at' : 'Running since', shortTime(data.stateSince)],
+      data.requestedBy && [data.desiredState === 'paused' ? 'Paused by' : 'Resumed by', data.requestedByName || data.requestedBy, true], // one line, cut with …
+      !data.online && data.lastSeen && ['Last seen', shortTime(data.lastSeen)],
     ].filter(Boolean);
     body = (
       <>
         <div className="agent-state">
           <span className={`agent-dot ${toneOf(v.badge)}`} aria-hidden="true" />
           <span className={`agent-word ${toneOf(v.badge)}`}>{v.badge}</span>
-          <EmailModeBadge agent={data} />
         </div>
         {button ? (
           <button
             className="btn primary agent-btn"
             disabled={acting || v.busy}
-            onClick={() => act(button, data)}
+            onClick={() => act(button)}
           >
-            <Icon name={button === 'stop' ? 'pause' : 'play'} /> {button === 'stop' ? 'Stop Agent' : 'Start Agent'}
+            <Icon name={button === 'pause' ? 'pause' : 'play'} /> {BUTTON_LABEL[button]}
           </button>
-        ) : <p className="muted small">{ADMINS_START}</p>}
+        ) : <p className="muted small">{ADMINS_RESUME}</p>}
         <dl className="kv">
-          {rows.map(([k, val]) => <div key={k} className="kv-row"><dt>{k}</dt><dd>{val}</dd></div>)}
+          {rows.map(([k, val, cut]) => <div key={k} className="kv-row"><dt>{k}</dt><dd className={cut ? 'kv-cut' : undefined} title={cut ? val : undefined}>{val}</dd></div>)}
         </dl>
       </>
     );

@@ -30,9 +30,10 @@ const LISTS = {
 const EMPTY_PAGE = { items: [], total: 0, page: 1, limit: PAGE_SIZE };
 // History search + filters, per list. The search text is already debounced by the page.
 const LIST_FILTERS = { sent: { q: '', status: 'all' }, replies: { q: '', label: 'all' } };
-// Agent status: poll every 3 s while a Start/Stop is being applied, otherwise every 10 s (pipeline-api.md).
+// Agent status: poll every 3 s while a pause/resume is being applied, otherwise every 5 s (dashboard-integration
+// section 3.5: an offline assistant shows within seconds, never as an endless spinner).
 const OPTIONS = {
-  agent: { refetchInterval: (q) => (q.state.data && !q.state.data.inSync ? 3000 : 10000) },
+  agent: { refetchInterval: (q) => (q.state.data && !q.state.data.inSync ? 3000 : 5000) },
 };
 const EMPTY = {
   agent: null, stats: null,
