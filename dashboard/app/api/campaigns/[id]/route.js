@@ -6,10 +6,13 @@
 //   PATCH { updatedAt, any of campaignName, campaignDetail, startDate, endDate, isActive } -> the updated campaign.
 //         updatedAt is the campaign's updatedAt as the page last saw it: if someone changed the campaign since, nothing
 //         is saved (409) instead of silently overwriting their change.
-//   DELETE -> { ok: true } (soft delete: the row stays in Supabase with deleted_at set, and is hidden from the page)
+//   DELETE -> { ok: true } (soft delete: the row stays in Supabase with deleted_at set, and is hidden from the page).
+//            The Campaign Agent is then told (after the answer): a live campaign is switched off, one in progress is closed.
+import { after } from 'next/server';
 import { adminClient, getCaller, requireAdmin, fail, handle } from '@/core/server/supabaseAdmin';
 import { TABLE, checkCampaign, toCampaign, dbError } from '@/core/server/campaigns';
 import { gateway, GatewayError } from '@/core/server/caGateway';
+import { closeCampaign, switchOffCampaign } from '@/core/server/ca';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +44,7 @@ export const GET = handle(async (request, { params }) => {
 });
 
 export const PATCH = handle(async (request, { params }) => {
-  const { error } = await requireAdmin(request);
+  const { user, error } = await requireAdmin(request);
   if (error) return error;
   const { id } = await params;
   if (!UUID.test(id)) return fail('Campaign not found.', 404);
@@ -59,7 +62,10 @@ export const PATCH = handle(async (request, { params }) => {
     .eq('id', id).is('deleted_at', null).eq('updated_at', seen)
     .select('*').maybeSingle();
   if (err) return dbError(err, 'save the campaign');
-  if (data) return Response.json(toCampaign(data));
+  if (data) {
+    if (row.is_active === false) after(() => switchOffCampaign(id, user)); // the slider turned off: a live campaign is switched off at the Campaign Agent too
+    return Response.json(toCampaign(data));
+  }
   // Nothing saved: either the campaign is gone, or someone changed it since the page loaded it.
   const { data: now, error: findErr } = await db.from(TABLE).select('id').eq('id', id).is('deleted_at', null).maybeSingle();
   if (findErr) return dbError(findErr, 'save the campaign');
@@ -68,7 +74,7 @@ export const PATCH = handle(async (request, { params }) => {
 });
 
 export const DELETE = handle(async (request, { params }) => {
-  const { error } = await requireAdmin(request);
+  const { user, error } = await requireAdmin(request);
   if (error) return error;
   const { id } = await params;
   if (!UUID.test(id)) return fail('Campaign not found.', 404);
@@ -76,5 +82,6 @@ export const DELETE = handle(async (request, { params }) => {
     .update({ deleted_at: new Date().toISOString() }).eq('id', id).is('deleted_at', null).select('id');
   if (err) return dbError(err, 'delete the campaign');
   if (!data.length) return fail('Campaign not found.', 404);
+  after(() => closeCampaign(id, user)); // a live campaign stops being given to the Marketing Agent; see core/server/ca.js
   return Response.json({ ok: true });
 });

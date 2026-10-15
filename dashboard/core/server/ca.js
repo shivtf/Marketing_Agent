@@ -45,3 +45,40 @@ export async function caStatus() {
 
 // The approval record: who sent a request, from the verified login only (at most 100 characters).
 export const requestedBy = (user) => (user.email || user.id).slice(0, 100);
+
+// The "Active" slider turned off: if this campaign is the live one, the Campaign Agent is asked to switch it off, which also
+// stops the Marketing Agent. Turned off on a campaign that is not live changes nothing there (it must not stop the work of
+// the campaign that is). Turning it on again does not start anything: that needs an approval. Best effort, after the answer.
+export async function switchOffCampaign(id, user) {
+  try {
+    const view = await gateway(`/v1/campaigns/${id}`);
+    if (!(view.state === 'PUBLISHED' || view.review_view?.live)) return;
+    await gateway(`/v1/campaigns/${id}/requests`, {
+      method: 'POST',
+      body: { request_type: 'deactivate', payload: {}, requested_by: requestedBy(user), idempotency_key: `deactivate-slider-${id}-${Date.now()}` },
+    });
+  } catch (e) {
+    console.error('[campaigns] could not tell the assistant the campaign was switched off:', e.message);
+  }
+}
+
+// A campaign the dashboard deletes must stop running. The delete only marks the row, so the Campaign Agent is told:
+// a live campaign is switched off ('deactivate', so the Marketing Agent stops being given it), and one that is still
+// being worked on is closed ('discard'). Best effort and after the answer is sent: the delete never waits for it or fails
+// because of it. A campaign the agent has never seen (state NEW) or has already closed needs nothing.
+export async function closeCampaign(id, user) {
+  try {
+    const view = await gateway(`/v1/campaigns/${id}`);
+    const steps = [];
+    if (view.state === 'PUBLISHED' || view.review_view?.live) steps.push('deactivate');
+    if (!['NEW', 'DISCARDED', 'PUBLISHED'].includes(view.state)) steps.push('discard');
+    for (const type of steps) {
+      await gateway(`/v1/campaigns/${id}/requests`, {
+        method: 'POST',
+        body: { request_type: type, payload: {}, requested_by: requestedBy(user), idempotency_key: `${type}-deleted-${id}` },
+      });
+    }
+  } catch (e) {
+    console.error('[campaigns] could not tell the assistant the campaign was deleted:', e.message);
+  }
+}
