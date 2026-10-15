@@ -2,6 +2,12 @@
 // The CSP lists where the page may load from or send to: this site, Supabase, the dashboard backend and Google Fonts.
 // A script injected into the page then can't load code from elsewhere or send the login token to another server.
 // 'unsafe-inline' scripts are needed by Next.js's own inline scripts and the theme script in app/layout.js.
+import nextEnv from '@next/env';
+
+// The CSP below is built when this file is evaluated, which can be before Next has put .env.local into process.env;
+// without the Supabase URL the browser is blocked from signing in.
+nextEnv.loadEnvConfig(process.cwd(), process.env.NODE_ENV !== 'production');
+
 const origin = (url) => {
   try { return new URL(url).origin; } catch { return null; }
 };

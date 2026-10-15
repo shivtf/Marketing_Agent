@@ -126,7 +126,8 @@ function Fields({ sections }) {
                   <div className="ca-value">{show(f.value)}</div>
                   <div className="badges">
                     <Badge text={f.status} tone={FIELD_TONE[f.status] || 'gray'} title="Where the value came from" />
-                    {(f.mapping === 'proposed' || f.mapping === 'not_emitted') && <Badge text="not applied yet" tone="amber" title="The Marketing Agent cannot use this yet" />}
+                    {f.mapping === 'proposed' && <Badge text="not applied yet" tone="amber" title="The Marketing Agent cannot use this yet" />}
+                    {f.mapping === 'not_emitted' && <Badge text="for the record" tone="gray" title="Describes the campaign. It is not put in the file, and the Marketing Agent does not need it." />}
                   </div>
                   {f.evidence_quote && <blockquote className="ca-quote">“{f.evidence_quote}”</blockquote>}
                 </dd>
@@ -142,7 +143,7 @@ function Fields({ sections }) {
 // Always shown, prominently: what was asked for that the Marketing Agent cannot do yet.
 function NotApplied({ items }) {
   return (
-    <Box title="Could not be applied" icon="alert" tone="warn">
+    <Box title={items?.length ? 'Could not be applied' : 'Everything asked for can be applied'} icon={items?.length ? 'alert' : 'check'} tone={items?.length ? 'warn' : undefined}>
       {items?.length ? (
         <ul className="ca-list">
           {items.map((n, i) => (
@@ -152,7 +153,7 @@ function NotApplied({ items }) {
             </li>
           ))}
         </ul>
-      ) : <p className="muted small ca-empty">Everything asked for can be applied.</p>}
+      ) : <p className="muted small ca-empty">The Marketing Agent can do everything asked for.</p>}
     </Box>
   );
 }
