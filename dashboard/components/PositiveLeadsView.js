@@ -3,6 +3,7 @@
 //   Positive      -> classified interested with confidence
 //   Needs review  -> the classifier wasn't sure (interested, question or a doubtful "no")
 //   Questions     -> asked something (scope, pricing, process) before deciding
+//   Not interested -> a confident "no": listed so a misread "yes" can still be spotted
 // Within each group, leads still waiting for our answer come first, longest-waiting on top.
 // The selected group lives in the URL (?group=review) so reloads, Back and shared links keep it.
 // Search (name, company, reply text) and sort apply to the selected group and to the drawer's Previous/Next.
@@ -22,6 +23,8 @@ const GROUPS = [
     hint: 'The classifier was not sure about these replies. Check them before following up; they are not counted as positive.' },
   { key: 'questions', label: 'Questions', kind: 'questionLead', icon: 'chat', empty: 'No open questions',
     hint: 'Asked about scope, pricing or process before deciding. Answer these quickly; they are not counted as positive.' },
+  { key: 'notInterested', label: 'Not interested', kind: 'notInterestedLead', icon: 'close', empty: 'No one has said no',
+    hint: 'Said no, so the agent closed them and no answer is needed. Skim these in case a reply was misread.' },
 ];
 
 function PositiveStatCards({ section }) {
@@ -72,6 +75,7 @@ function FollowUp({ lead }) {
     );
   }
   if (lead.followUp === 'queued') return <Badge text="Answer queued" tone="gray" />;
+  if (lead.followUp === 'none') return <Badge text="No answer needed" tone="gray" />;
   const days = daysSince(lead.repliedAt);
   const text = days === 0 ? 'Waiting · today' : `Waiting ${days} day${days === 1 ? '' : 's'}`;
   return <Badge text={text} tone={days >= OVERDUE_DAYS ? 'red' : 'amber'} />;

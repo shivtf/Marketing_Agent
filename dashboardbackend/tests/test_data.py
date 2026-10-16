@@ -147,6 +147,8 @@ def test_positive_leads_groups(positive_rows):
     assert [r["id"] for r in res["review"]] == ["b", "g"]  # equal wait: stable sort keeps input order
     assert {r["id"]: r["reviewReason"] for r in res["review"]}["b"] == "Low confidence (0.42)"
     assert [r["id"] for r in res["questions"]] == ["c"]
+    assert [(r["id"], r["followUp"]) for r in res["notInterested"]] == [("e", "none")]  # unsubscribe "f" not listed
+    assert {r["id"]: r["followUp"] for r in res["review"]}["g"] == "waiting"  # a doubtful "no" may need an answer
     # repliedLeads matches the dashboard's Responses (every lead that replied in person), not just the 7 classified
     assert res["repliedLeads"] == 9 and res["pending"] == 2 and res["pendingSince"] == "2026-10-01T08:00:00+00:00"
     assert all("body" not in r and "reviewNote" not in r and "answerQueued" not in r for r in res["positive"])

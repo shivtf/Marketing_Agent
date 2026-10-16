@@ -139,7 +139,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
 .brand .tile { background: var(--accent); color: #fff; }
 .tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
-.tab { padding: 7px 16px; border-radius: 10px; color: var(--muted); font-weight: 500; text-decoration: none; white-space: nowrap; transition: background .15s, color .15s, transform .08s; }
+.tab { padding: 7px 16px; border: 0; border-radius: 10px; background: none; color: var(--muted); font-family: inherit; font-size: inherit; font-weight: 500; text-decoration: none; white-space: nowrap; cursor: pointer; transition: background .15s, color .15s, transform .08s; }
 .tab:hover { background: var(--row-hover); color: var(--text); }
 .tab:active { transform: scale(.97); }
 .tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
@@ -785,3 +785,17 @@ a.row-icon:hover { background: var(--accent-soft); color: var(--accent); }
   .ca-field { grid-template-columns: 1fr; gap: 4px; }
   .ca-versions th:nth-child(3), .ca-versions td:nth-child(3) { display: none; }
 }
+
+/* Replies Received: Gmail inbox tab (components/GmailInbox.js) */
+.reply-tabs { margin: -4px 0 12px; }.gmail-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.gmail-bar b { color: var(--text); font-weight: 600; }
+.gmail-msg { margin-top: 8px; }
+.gmail-row.unread .name { font-weight: 700; color: var(--text); }
+.gmail-row .badge { margin-top: 4px; }
+.gmail-empty-note { max-width: 360px; }
+.gmail-empty-action { margin-top: 8px; }
+.gmail-ended { display: grid; gap: 8px; }
+.gmail-view .file-view-head .row { align-items: center; gap: 6px; }
+.gmail-view .file-view-head .icon-btn { margin-left: 4px; }
+.gmail-view .meta { margin: 0 0 12px; }
+.gmail-body { white-space: normal; font-size: 14px; background: var(--card); max-height: 55vh; }

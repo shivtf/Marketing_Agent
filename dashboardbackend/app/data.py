@@ -220,8 +220,9 @@ def _follow_up_order(items: list[dict]) -> list[dict]:
 @router.get("/leads/positive")
 async def positive_leads() -> dict:
     """Leads judged on their latest human reply, split into positive (interested, confident),
-    review (low confidence) and questions. followUp says whether we have answered that reply:
-    'replied' (sent), 'queued' (approved, not sent yet) or 'waiting'."""
+    review (low confidence), questions and notInterested (a confident "no"). followUp says whether we have
+    answered that reply: 'replied' (sent), 'queued' (approved, not sent yet), 'waiting', or 'none' (a "no" that
+    needs no answer)."""
     rows = await _rows(
         f"""select l.id, l.number, l.name, l.company, l.source, l.status,
                    r.id as reply_id, r.received_at as replied_at, r.label, r.review_note, r.body,
@@ -239,18 +240,23 @@ async def positive_leads() -> dict:
     pending = (await _rows("select count(*) as pending, min(received_at) as since from replies where label is null"))[0]
     # Same count as the dashboard's Responses: every lead with a reply written by a person, classified or not.
     replied = await _value(f"select count(*) from ({_LEADS}) l where status = 'Responded'")  # noqa: S608
-    groups: dict[str, list[dict]] = {"positive": [], "review": [], "questions": []}
+    groups: dict[str, list[dict]] = {"positive": [], "review": [], "questions": [], "notInterested": []}
     for r in rows:
         r["preview"] = _preview(r.pop("body"))
         r["reviewReason"] = _review_reason(r.pop("reviewNote"))
         queued = r.pop("answerQueued")
-        r["followUp"] = "replied" if r["answeredAt"] else "queued" if queued else "waiting"
-        if r["reviewReason"] and r["label"] in _REVIEWABLE:
+        review = bool(r["reviewReason"]) and r["label"] in _REVIEWABLE
+        # A confident "no" closes the lead: nothing is waiting on us unless someone chose to answer anyway.
+        closed = r["label"] == "not_interested" and not review
+        r["followUp"] = "replied" if r["answeredAt"] else "queued" if queued else "none" if closed else "waiting"
+        if review:
             groups["review"].append(r)
         elif r["label"] == "interested":
             groups["positive"].append(r)
         elif r["label"] == "question":
             groups["questions"].append(r)
+        elif closed:
+            groups["notInterested"].append(r)
     return {
         **{k: _follow_up_order(v) for k, v in groups.items()},
         "repliedLeads": replied or 0,

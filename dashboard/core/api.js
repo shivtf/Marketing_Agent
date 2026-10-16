@@ -64,13 +64,14 @@ export const resumeAgent = () => authFetch('/api/ca/state', { method: 'POST', bo
 export const getLeads = ({ status, source, page, limit } = {}) => apiFetch(`/leads${qs({ status, source, page, limit })}`);
 export const getLeadStats = () => apiFetch('/leads/stats');
 export const getLead = (id) => apiFetch(`/leads/${encodeURIComponent(id)}`);
-// -> { positive, review, questions, repliedLeads, pending }: leads judged on their latest human reply.
+// -> { positive, review, questions, notInterested, repliedLeads, pending }: leads judged on their latest human reply.
+// notInterested defaults to empty so a backend deployed before that group still loads.
 // An older backend returns a plain list; fail cleanly (the page shows "Couldn't load" + Retry) instead of crashing.
 export async function getPositiveLeads() {
   const data = await apiFetch('/leads/positive');
   const ok = data && ['positive', 'review', 'questions'].every((k) => Array.isArray(data[k]));
   if (!ok) throw new ApiError('Unexpected response from /leads/positive. Is the backend up to date?', 200);
-  return data;
+  return { notInterested: [], ...data };
 }
 
 // ---------- Emails ----------

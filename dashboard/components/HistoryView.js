@@ -3,23 +3,9 @@
 import { useEffect, useState } from 'react';
 import { OpenRow } from './OpenRow';
 import { useList } from './DataProvider';
-import { Badge, CardHead, ViewCell, DataTable, Pager } from './ui';
+import { Badge, CardHead, ViewCell, DataTable, Pager, SearchBox } from './ui';
+import GmailInbox from './GmailInbox';
 import { pad, fmtDate, replyLabel, toneOf } from '@/core/format';
-
-// Search box that waits until typing pauses (300 ms) before asking the server.
-function SearchBox({ value, onSearch, placeholder }) {
-  const [text, setText] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => { if (text.trim() !== value) onSearch(text.trim()); }, 300);
-    return () => clearTimeout(t);
-  }, [text]); // eslint-disable-line react-hooks/exhaustive-deps -- only typing starts a search
-  return (
-    <input
-      className="search-input" type="search" placeholder={placeholder} aria-label={placeholder}
-      value={text} onChange={(e) => setText(e.target.value)} maxLength={100}
-    />
-  );
-}
 
 const SENT_FILTERS = [['all', 'All'], ['sent', 'Sent'], ['failed', 'Failed']];
 const REPLY_FILTERS = [
@@ -28,13 +14,14 @@ const REPLY_FILTERS = [
   ['unclassified', 'Not classified yet'],
 ];
 
-function HistoryCard({ section, icon, title, totalLabel, extra, kind, emptyText, head, row, tools }) {
+function HistoryCard({ section, icon, title, totalLabel, extra, kind, emptyText, head, row, tools, tabs }) {
   const list = useList(section);
   const { status, data, reload, fetching, listFilter, setListFilter } = list;
   const filtered = !!listFilter && Object.entries(listFilter).some(([k, v]) => (k === 'q' ? v : v !== 'all'));
   return (
     <div className="card">
       <CardHead icon={icon} title={title} />
+      {tabs}
       {status === 'ready' && (
         <div className="total-block">
           <div className="muted small">{filtered ? 'Matching' : totalLabel}</div>
@@ -90,30 +77,62 @@ export default function HistoryView() {
             </>
           )}
         />
-        <HistoryCard
-          section="replies" icon="chat" title="Replies Received" totalLabel="Total Replies Received" kind="reply" emptyText="No replies yet"
-          tools={(f, set) => (
-            <>
-              <SearchBox value={f.q} onSearch={(q) => set({ q })} placeholder="Search sender, company, subject" />
-              <select className="select" aria-label="Filter by reply type" value={f.label} onChange={(ev) => set({ label: ev.target.value })}>
-                {REPLY_FILTERS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-              </select>
-            </>
-          )}
-          head={<><th>#</th><th>Sender Name/Email</th><th>Reply</th><th>Date/Time Received</th><th className="view">View</th></>}
-          row={(r) => (
-            <>
-              <td className="num">{pad(r.number)}</td>
-              <td><div className="name ellip">{r.senderName || '—'}</div><div className="muted small ellip">{r.company || r.senderEmail}</div></td>
-              <td>
-                <Badge text={replyLabel(r.label)} tone={toneOf(replyLabel(r.label))} />
-                <div className="muted small ellip">{r.subject}</div>
-              </td>
-              <td className="muted when">{fmtDate(r.receivedAt, 'table')}</td><ViewCell />
-            </>
-          )}
-        />
+        <RepliesCard />
       </div>
     </main>
+  );
+}
+
+// Replies Received, in two tabs: the replies the agent saved (matched to a lead and classified), and the connected
+// Gmail inbox as it is (read only), for mail that reaches Gmail instead of the agent. Back from Google's consent
+// screen (/history?gmail=...), the Gmail tab opens.
+const REPLY_TABS = [['agent', 'Agent replies'], ['gmail', 'Gmail inbox']];
+
+function RepliesCard() {
+  const [tab, setTab] = useState('agent');
+  useEffect(() => { if (new URLSearchParams(window.location.search).has('gmail')) setTab('gmail'); }, []);
+  const tabs = (
+    <div className="tabs reply-tabs" role="tablist" aria-label="Replies">
+      {REPLY_TABS.map(([k, label]) => (
+        <button key={k} type="button" role="tab" aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+  if (tab === 'gmail') {
+    return (
+      <div className="card">
+        <CardHead icon="chat" title="Replies Received" />
+        {tabs}
+        <GmailInbox />
+      </div>
+    );
+  }
+  return (
+    <HistoryCard
+      tabs={tabs}
+      section="replies" icon="chat" title="Replies Received" totalLabel="Total Replies Received" kind="reply" emptyText="No replies yet"
+      tools={(f, set) => (
+        <>
+          <SearchBox value={f.q} onSearch={(q) => set({ q })} placeholder="Search sender, company, subject" />
+          <select className="select" aria-label="Filter by reply type" value={f.label} onChange={(ev) => set({ label: ev.target.value })}>
+            {REPLY_FILTERS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+        </>
+      )}
+      head={<><th>#</th><th>Sender Name/Email</th><th>Reply</th><th>Date/Time Received</th><th className="view">View</th></>}
+      row={(r) => (
+        <>
+          <td className="num">{pad(r.number)}</td>
+          <td><div className="name ellip">{r.senderName || '—'}</div><div className="muted small ellip">{r.company || r.senderEmail}</div></td>
+          <td>
+            <Badge text={replyLabel(r.label)} tone={toneOf(replyLabel(r.label))} />
+            <div className="muted small ellip">{r.subject}</div>
+          </td>
+          <td className="muted when">{fmtDate(r.receivedAt, 'table')}</td><ViewCell />
+        </>
+      )}
+    />
   );
 }

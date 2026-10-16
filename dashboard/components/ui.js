@@ -1,4 +1,5 @@
 // Small presentational pieces shared by every page and the drawer.
+import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { sourceLabel, toneOf } from '@/core/format';
 
@@ -41,6 +42,21 @@ export const MetaRow = ({ k, children }) => (
 );
 
 export const ViewCell = () => <td className="view"><span aria-label="View"><Icon name="eye" /></span></td>;
+
+// Search box that waits until typing pauses (300 ms) before asking the server.
+export function SearchBox({ value, onSearch, placeholder, maxLength = 100 }) {
+  const [text, setText] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => { if (text.trim() !== value) onSearch(text.trim()); }, 300);
+    return () => clearTimeout(t);
+  }, [text]); // eslint-disable-line react-hooks/exhaustive-deps -- only typing starts a search
+  return (
+    <input
+      className="search-input" type="search" placeholder={placeholder} aria-label={placeholder}
+      value={text} onChange={(e) => setText(e.target.value)} maxLength={maxLength}
+    />
+  );
+}
 
 export const ExtLink = ({ href, children }) => (
   <a href={href} target="_blank" rel="noopener noreferrer">{children} <Icon name="ext" /></a>

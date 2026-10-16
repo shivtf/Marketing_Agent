@@ -52,7 +52,7 @@ export function getKinds(goto) {
   };
 
   // Same drawer as a lead, opened from a Positive Leads section: Previous/Next stays in that section
-  // (positive / review / questions, with the page's search and sort) and the latest reply's label
+  // (positive / review / questions / notInterested, with the page's search and sort) and the latest reply's label
   // and any review reason are shown.
   const fromPositivePage = (group) => ({
     ...lead,
@@ -78,6 +78,7 @@ export function getKinds(goto) {
   const positiveLead = fromPositivePage('positive');
   const reviewLead = fromPositivePage('review');
   const questionLead = fromPositivePage('questions');
+  const notInterestedLead = fromPositivePage('notInterested');
 
   const sent = {
     paged: 'sent',
@@ -172,5 +173,5 @@ export function getKinds(goto) {
     },
   };
 
-  return { lead, positiveLead, reviewLead, questionLead, sent, reply, blog };
+  return { lead, positiveLead, reviewLead, questionLead, notInterestedLead, sent, reply, blog };
 }

@@ -37,7 +37,7 @@ const OPTIONS = {
 };
 const EMPTY = {
   agent: null, stats: null,
-  positive: { positive: [], review: [], questions: [], repliedLeads: 0 },
+  positive: { positive: [], review: [], questions: [], notInterested: [], repliedLeads: 0 },
 };
 
 // Positive Leads search + sort ({ q, sort }), applied to one group. 'followup' keeps the backend order
