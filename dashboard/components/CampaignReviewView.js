@@ -331,7 +331,7 @@ function Published({ view, can, busy, send, confirm }) {
   const applied = view.applied === true ? ['Running it', 'green'] : view.applied === false ? ['Not yet', 'amber'] : ['Not known (offline)', 'gray'];
   async function rollback(v) {
     if (!(await confirm({ title: `Make version ${v} live again?`, message: 'It replaces the live version. The Marketing Agent takes it at its next pass.', confirmLabel: 'Make live' }))) return;
-    send({ request_type: 'rollback', payload: { version: v }, idempotency_key: `rollback-${v}-${Date.now()}` });
+    send({ request_type: 'rollback', payload: { version: v, start_pipeline: true }, idempotency_key: `rollback-${v}-${Date.now()}` });
   }
   async function deactivate() {
     if (!(await confirm({ title: 'Switch this campaign off?', message: 'Nothing of it stays live. Its versions are kept and can be made live again.', confirmLabel: 'Switch off', danger: true }))) return;
