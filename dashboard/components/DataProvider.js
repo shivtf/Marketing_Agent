@@ -13,6 +13,7 @@ const FETCHERS = {
   agent: api.getAgent,
   stats: api.getLeadStats,
   positive: api.getPositiveLeads,
+  needsContact: api.getNeedsContact,
 };
 
 // Paged lists: one page at a time from the backend -> { items, total, page, limit }.
@@ -38,6 +39,7 @@ const OPTIONS = {
 const EMPTY = {
   agent: null, stats: null,
   positive: { positive: [], review: [], questions: [], notInterested: [], repliedLeads: 0 },
+  needsContact: { items: [], total: 0 },
 };
 
 // Positive Leads search + sort ({ q, sort }), applied to one group. 'followup' keeps the backend order

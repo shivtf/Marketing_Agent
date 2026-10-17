@@ -8,6 +8,7 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 | `GET /health`                                              | none   | liveness                                     |
 | `GET /auth/me`                                             | Bearer | returns `id`, `email`, `role` of the user    |
 | `GET /leads`, `/leads/stats`, `/leads/positive`, `/leads/{id}` | Bearer | leads, counts, positive / review / question leads (latest human reply), one lead |
+| `GET /needs-contact`, `POST /needs-contact/{id}/contact` | Bearer | qualified leads with no contact; save an email for one (the only lead write, SQL `submit_manual_contact()`) |
 | `GET /emails/sent`, `/emails/sent/{id}`                    | Bearer | sent emails                                  |
 | `GET /emails/replies`, `/emails/replies/{id}`              | Bearer | replies, with the email each one answers     |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |
@@ -21,7 +22,10 @@ lead / outreach / content services ──write──▶ Supabase Postgres ◀─
 ```
 
 1. The pipeline services (`services/*`) write companies, contacts, emails, replies and content posts to
-   Supabase Postgres. This backend never writes to those tables.
+   Supabase Postgres. This backend never writes to those tables, except for the one function call below.
+   A company with no contact (`NEEDS_CONTACT`) gets its email from a person here: `POST /needs-contact/{id}/contact` calls
+   the SQL function `submit_manual_contact()` (Marketing-AI-Agent migration `0013`), the agent drafts the email and posts the
+   approval request to Slack. Nothing is sent from here.
 2. The dashboard logs the user in with Supabase Auth and calls this API through `apiFetch()` in
    `dashboard/core/api.js`, sending `Authorization: Bearer <access_token>`.
 3. Every route in `app/data.py` runs `current_user` first (`app/auth.py`), which verifies the token's

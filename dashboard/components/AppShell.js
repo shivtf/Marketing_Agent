@@ -16,6 +16,7 @@ const TABS = [
   { href: '/dashboard', label: 'Dashboard', icon: 'home' },
   { href: '/history', label: 'History', icon: 'clock' },
   { href: '/positive-leads', label: 'Positive Leads', icon: 'check' },
+  { href: '/needs-contact', label: 'Needs Contact', icon: 'mail' },
   { href: '/blogs', label: 'Blogs', icon: 'doc' },
   { href: '/campaign', label: 'Campaign', icon: 'megaphone' },
 ];
