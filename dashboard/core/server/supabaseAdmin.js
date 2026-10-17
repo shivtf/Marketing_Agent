@@ -22,6 +22,9 @@ export async function getCaller(request) {
   // Only accounts an admin gave a dashboard role, whatever the project's sign-up setting is (same rule as the
   // backend's current_user).
   if (!ROLES.includes(data.user.app_metadata?.role)) return { error: json('This account has no access to the dashboard.', 403) };
+  // The person's own token, for the Campaign Agent's gateway (X-User-Token): it proves who asked. Not enumerable, so it
+  // never ends up in a response by accident.
+  Object.defineProperty(data.user, 'accessToken', { value: token, enumerable: false });
   return { user: data.user };
 }
 

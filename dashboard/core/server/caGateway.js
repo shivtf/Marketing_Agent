@@ -13,7 +13,9 @@ export class GatewayError extends Error {
 }
 
 // -> the gateway's JSON. Throws GatewayError: status 0 = not reachable or timed out, otherwise the gateway's own status.
-export async function gateway(path, { method = 'GET', body, timeout = TIMEOUT_MS } = {}) {
+// `user` (from getCaller): the signed-in person's own token goes along as X-User-Token, so the gateway records who asked
+// from the login itself, not from what this server says (Campaign-Agent src/campaign_agent/api/users.py).
+export async function gateway(path, { method = 'GET', body, timeout = TIMEOUT_MS, user } = {}) {
   const token = (process.env.CA_GATEWAY_TOKEN || '').trim();
   if (!token) throw new GatewayError(503, 'CA_GATEWAY_TOKEN is not set on the dashboard server.');
   const base = (process.env.CA_GATEWAY_URL || DEFAULT_URL).trim().replace(/\/$/, '');
@@ -21,7 +23,11 @@ export async function gateway(path, { method = 'GET', body, timeout = TIMEOUT_MS
   try {
     res = await fetch(`${base}${path}`, {
       method,
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(user?.accessToken ? { 'X-User-Token': user.accessToken } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: 'no-store',
       signal: AbortSignal.timeout(timeout),

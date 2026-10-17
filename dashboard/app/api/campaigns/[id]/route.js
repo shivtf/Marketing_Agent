@@ -5,7 +5,8 @@
 // Changes, admins only:
 //   PATCH { updatedAt, any of campaignName, campaignDetail, startDate, endDate, isActive } -> the updated campaign.
 //         updatedAt is the campaign's updatedAt as the page last saw it: if someone changed the campaign since, nothing
-//         is saved (409) instead of silently overwriting their change.
+//         is saved (409) instead of silently overwriting their change. The details cannot change once the assistant
+//         has started on them (422): it would not see the change; "Ask for a change" on the review is the way.
 //   DELETE -> { ok: true } (soft delete: the row stays in Supabase with deleted_at set, and is hidden from the page).
 //            The Campaign Agent is then told (after the answer): a live campaign is switched off, one in progress is closed.
 import { after } from 'next/server';
@@ -55,6 +56,19 @@ export const PATCH = handle(async (request, { params }) => {
   if (invalid) return invalid;
   if (!Object.keys(row).length) return fail('Nothing to change.', 400);
   const db = adminClient();
+  if ('campaign_detail' in row) {
+    // The assistant reads the details once, when it starts. A later edit here would change nothing it does, so it is
+    // refused once it has started; the change goes through "Ask for a change" on the review instead.
+    const [{ data: now, error: readErr }, { count, error: countErr }] = await Promise.all([
+      db.from(TABLE).select('campaign_detail').eq('id', id).is('deleted_at', null).maybeSingle(),
+      db.from('campaign_request').select('id', { count: 'exact', head: true }).eq('campaign_id', id),
+    ]);
+    if (readErr) return dbError(readErr, 'save the campaign');
+    if (countErr && !['42P01', 'PGRST205'].includes(countErr.code)) return dbError(countErr, 'save the campaign');
+    if (now && (now.campaign_detail || null) !== row.campaign_detail && count > 0) {
+      return fail('The assistant has already started on these details. Ask for the change on the review instead (Ask for a change).', 422);
+    }
+  }
   // Saved only while updated_at is still what the page saw. Passed on as the exact text Supabase sent: a JS Date would
   // drop the microseconds of a now() default and never match.
   const { data, error: err } = await db.from(TABLE)

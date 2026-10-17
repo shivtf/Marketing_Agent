@@ -14,7 +14,7 @@ from typing import Annotated
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth import current_admin, current_user
+from app.auth import call_or_sql, current_admin, current_user
 from app.data import _pg
 
 log = logging.getLogger(__name__)
@@ -31,9 +31,16 @@ def _count(status: str) -> int:
         return 0
 
 
-async def _end(sql: str, *args) -> int:
+async def _end(sql: str, *args, fn: str | None = None) -> int:
+    """`fn`: the same through the narrow function of migrations/007 (returns the count), used when it exists."""
     try:
-        return _count(await (await _pg()).execute(sql, *args))
+        pool = await _pg()
+        if fn is None:
+            return _count(await pool.execute(sql, *args))
+        try:
+            return int(await pool.fetchval(fn, *args) or 0)
+        except asyncpg.UndefinedFunctionError:
+            return _count(await pool.execute(sql, *args))
     except asyncpg.PostgresError as exc:
         log.error("Could not end sessions", exc_info=True)
         raise HTTPException(503, "Couldn't sign the account out: the database refused to end its sessions.") from exc
@@ -49,7 +56,10 @@ async def end_user_sessions(user_id: str, admin: Admin) -> dict:
         raise HTTPException(404, "User not found.") from exc
     if uid == admin["sub"]:
         raise HTTPException(400, "You can't sign yourself out here.")
-    ended = await _end("delete from auth.sessions where user_id = $1::uuid", uid)
+    ended = await _end(
+        "delete from auth.sessions where user_id = $1::uuid", uid,
+        fn="select public.dashboard_end_sessions($1::uuid)",
+    )
     # The account is free for a new sign-in at once (the one-sign-in rule would allow it anyway: no session is left).
     await _end("delete from public.dashboard_presence where user_id = $1::uuid", uid)
     return {"ended": ended}
@@ -62,6 +72,7 @@ async def end_other_sessions(user: User) -> dict:
     if not session_id:
         raise HTTPException(400, "This sign-in has no session id.")
     ended = await _end(
-        "delete from auth.sessions where user_id = $1::uuid and id <> $2::uuid", user["sub"], session_id
+        "delete from auth.sessions where user_id = $1::uuid and id <> $2::uuid", user["sub"], session_id,
+        fn="select public.dashboard_end_sessions($1::uuid, $2::uuid)",
     )
     return {"ended": ended}

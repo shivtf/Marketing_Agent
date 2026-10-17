@@ -59,3 +59,14 @@ python -m pytest
 
 Tokens are verified against the project's JWKS (`/auth/v1/.well-known/jwks.json`); set `SUPABASE_JWT_SECRET`
 only for legacy HS256 projects. The dashboard sends `Authorization: Bearer <session.access_token>`.
+
+## Database login
+
+Use the limited `dashboard_backend` login, not the database owner: run `migrations/007_dashboard_backend_role.sql` once
+in the Supabase SQL editor, set its password (`alter role dashboard_backend with login password '...'`), and put the
+pooler URL with that user in `DATABASE_URL`. It can read the lead tables, keep `dashboard_presence`, call
+`submit_manual_contact()`, and reach Supabase Auth only through four narrow functions in that file. Until 007 is applied
+the code falls back to the owner's direct queries, so the order of deploying does not matter.
+
+A change (any request that is not a read) is refused with 503 while the sign-in check cannot reach the database; reads
+still work.

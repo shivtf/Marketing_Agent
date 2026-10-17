@@ -10,6 +10,7 @@ import { Badge, ErrorBox, Skeleton } from './ui';
 import { Icon } from './Icon';
 import { useConfirm } from './ConfirmDialog';
 import { useSection } from './DataProvider';
+import { briefFor } from '@/core/briefView';
 import { describeAgent } from './agent';
 import { getCampaignView, sendRequest, shortHash } from '@/core/ca';
 import { getSession, isAdmin } from '@/core/auth';
@@ -154,6 +155,45 @@ function NotApplied({ items }) {
           ))}
         </ul>
       ) : <p className="muted small ca-empty">The Marketing Agent can do everything asked for.</p>}
+    </Box>
+  );
+}
+
+// The Campaign Agent's research brief on the version under review (core/briefView.js): what the target customers look
+// like, each statement with the web pages it comes from, and what could not be confirmed. Null when research is off.
+function ResearchBrief({ brief, candidate }) {
+  const b = briefFor(brief, candidate);
+  if (!b) return null;
+  return (
+    <Box title="Research brief" icon="search" tone={b.warn ? 'warn' : undefined} aside={<span className={`badge ${b.tone}`}>{b.label}</span>}>
+      {b.parts.map((part) => (
+        <div key={part.key} className="ca-brief-part">
+          <h3 className="ca-section-title">{part.title}</h3>
+          <ul className="ca-list">
+            {part.items.map((item, i) => (
+              <li key={i} className="ca-brief-item">
+                <span>{item.text}</span>
+                <span className="ca-brief-sources">
+                  {item.sources.map((s) => (
+                    <a key={s.url} href={s.url} target="_blank" rel="noreferrer noopener" title={s.url} className="ca-brief-source">{s.site}</a>
+                  ))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      {b.notConfirmed.length > 0 && (
+        <div className="ca-brief-part">
+          <h3 className="ca-section-title">Not confirmed</h3>
+          <ul className="ca-list">{b.notConfirmed.map((n, i) => <li key={i} className="muted">{n}</li>)}</ul>
+        </div>
+      )}
+      <p className="muted small ca-empty">
+        From public web pages{b.searchedAt ? `, searched ${new Date(b.searchedAt).toLocaleString()}` : ''}. It describes the kind of customer and
+        names no companies; open a source to check a statement.
+        {b.queries.length > 0 && <> Searches: {b.queries.map((q) => `“${q}”`).join(', ')}.</>}
+      </p>
     </Box>
   );
 }
@@ -379,6 +419,9 @@ function Published({ view, can, busy, send, confirm }) {
 
 // ---------- The review (AWAITING_REVIEW) ----------
 
+const retryApprove = (view) =>
+  view.state === 'PUBLISH_FAILED' || (view.last_request?.type === 'approve' && view.last_request?.outcome === 'failed');
+
 function ReviewActions({ view, can, busy, send, confirm }) {
   const c = view.candidate;
   const failed = failedLevels(c);
@@ -393,7 +436,9 @@ function ReviewActions({ view, can, busy, send, confirm }) {
     send({
       request_type: 'approve',
       payload: { version: c.version, sha256: c.sha256, start_pipeline: true },
-      idempotency_key: `approve-${c.version}-${c.sha256.slice(0, 12)}${view.state === 'PUBLISH_FAILED' ? `-retry-${Date.now()}` : ''}`,
+      // The same key twice is the same request (a double click approves once). After a refused approval (a store
+      // failure, a rate limit, a blocked publish) pressing Approve again must be a new request, not the old answer.
+      idempotency_key: `approve-${c.version}-${c.sha256.slice(0, 12)}${retryApprove(view) ? `-retry-${Date.now()}` : ''}`,
     });
   }
   async function reject() {
@@ -545,6 +590,7 @@ export default function CampaignReviewView({ id }) {
           </div>
         )}
         <NotApplied items={view.not_applied} />
+        <ResearchBrief brief={view.brief} candidate={view.candidate} />
         <Box title="What the assistant understood" icon="eye"><Fields sections={view.sections} /></Box>
         <Notices view={view} />
         <Suggestions items={view.suggestions} can={can} busy={busy} send={send} />
