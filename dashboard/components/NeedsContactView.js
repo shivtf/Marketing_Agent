@@ -10,6 +10,9 @@ import { useSection, useUpdateSection } from './DataProvider';
 import { addContact } from '@/core/api';
 import { fmtDate } from '@/core/format';
 
+// The agent's note reads "no contact after 3 attempts: <why>". The page already says no contact was found, so keep the why.
+const reasonText = (note) => (note || '').replace(/^no contact after \d+ attempts?:\s*/i, '') || 'No public business email found';
+
 const EMAIL_SHAPE = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/;
 
 function ContactDialog({ lead, onClose, onSaved }) {
@@ -106,7 +109,7 @@ export default function NeedsContactView() {
           emptyText="Every qualified company has a contact"
           what="companies"
           onRetry={reload}
-          head={<><th>Company</th><th>About</th><th>Score</th><th>Why no contact</th><th>Found</th><th className="view">Edit</th></>}
+          head={<><th>Company</th><th>About</th><th>Score</th><th>Why no contact</th><th>Found</th><th className="needs-edit"><span className="sr-only">Edit</span></th></>}
           rows={data.items.map((l) => (
             <tr key={l.id}>
               <td>
@@ -116,11 +119,11 @@ export default function NeedsContactView() {
               <td><div className="ellip preview">{l.about || <span className="muted">—</span>}</div></td>
               <td className="num">{l.score}</td>
               <td>
-                <div className="small">{l.reason || 'No public business email found'}</div>
+                <div className="small needs-reason">{reasonText(l.reason)}</div>
                 {/^https?:\/\//i.test(l.formUrl || '') && <div className="small"><ExtLink href={l.formUrl}>Contact form</ExtLink></div>}
               </td>
               <td className="muted when">{fmtDate(l.since, 'table')}</td>
-              <td className="view">
+              <td className="needs-edit">
                 <button className="btn" type="button" onClick={() => { setSaved(''); setEditing(l); }} aria-label={`Add contact for ${l.company}`}>
                   <Icon name="edit" /> Edit
                 </button>
