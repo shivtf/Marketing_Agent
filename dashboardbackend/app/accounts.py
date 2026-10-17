@@ -14,7 +14,7 @@ from typing import Annotated
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth import current_admin, current_user
+from app.auth import current_admin, current_user, forget_checks
 from app.data import _pg
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ async def end_user_sessions(user_id: str, admin: Admin) -> dict:
     if uid == admin["sub"]:
         raise HTTPException(400, "You can't sign yourself out here.")
     ended = await _end("delete from auth.sessions where user_id = $1::uuid", uid)
+    forget_checks(uid)  # their next request on this server is checked again (and refused) at once
     # The account is free for a new sign-in at once (the one-sign-in rule would allow it anyway: no session is left).
     await _end("delete from public.dashboard_presence where user_id = $1::uuid", uid)
     return {"ended": ended}

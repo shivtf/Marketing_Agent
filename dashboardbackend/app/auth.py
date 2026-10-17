@@ -2,9 +2,11 @@
 
 import logging
 import os
+import time
 from functools import lru_cache
 from typing import Annotated
 
+import asyncpg
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -31,7 +33,7 @@ def supabase_url() -> str:
     if not url.startswith(("http://", "https://")):
         raise RuntimeError(
             "SUPABASE_URL is not set or is not an http(s) URL. Put it in "
-            "eval/dashboardbackend/.env (see .env.example) and restart the server."
+            "dashboardbackend/.env and restart the server."
         )
     return url.rstrip("/")
 
@@ -63,6 +65,7 @@ def decode_token(token: str) -> dict:
 # may take over only once the holder signed out, its Supabase session ended, or it has been quiet for HOLD_FOR
 # (a closed tab must not lock the account forever). The open dashboard checks in every minute to keep its hold.
 HOLD_FOR = "3 minutes"
+# HOLD_FOR is a constant; the values are $1/$2.
 _CLAIM = f"""
 insert into dashboard_presence as p (user_id, session_id, last_seen) values ($1::uuid, $2::uuid, now())
 on conflict (user_id) do update set session_id = excluded.session_id, last_seen = now()
@@ -70,25 +73,27 @@ on conflict (user_id) do update set session_id = excluded.session_id, last_seen 
      or p.last_seen < now() - interval '{HOLD_FOR}'
      or not exists (select 1 from auth.sessions s where s.id = p.session_id)
 returning session_id
-"""
+"""  # noqa: S608
 IN_USE = "This account is already signed in on another device."
-# Same as migrations/001_dashboard_presence.sql, so the check works without running that file by hand.
-_CREATE = """
-create table if not exists public.dashboard_presence (
-  user_id    uuid primary key references auth.users (id) on delete cascade,
-  session_id uuid not null,
-  last_seen  timestamptz not null default now()
-);
-alter table public.dashboard_presence enable row level security;
-"""
-_table_ready = False
+# The check can't run (database unreachable, table missing): the request is refused with 503, never let through, so a
+# removed account or a second sign-in can't slip in during an outage. 503, not 401/409: the dashboard keeps the user
+# signed in and offers Retry.
+CHECK_FAILED = "Couldn't check your sign-in right now. Try again in a moment."
+NO_PRESENCE_TABLE = ("The sign-in check needs the dashboard_presence table. Run "
+                     "dashboardbackend/migrations/001_dashboard_presence.sql in the Supabase SQL editor.")
+
+# A session that passed the check is not checked again for CHECKED_FOR seconds: the dashboard sends several requests
+# per page, and each check is 2-3 database round trips. The cost: a removal or a sign-out on another device takes up to
+# that long to reach this server (sign-out here, and an admin's "end sessions", clear it at once). Short enough that
+# the hold on the account (HOLD_FOR) is still refreshed long before it runs out.
+CHECKED_FOR = 30.0
+_checked: dict[tuple[str, str], float] = {}  # (user id, session id) -> time.monotonic() of the last check that passed
 
 
-async def _ensure_table(pool) -> None:
-    global _table_ready
-    if not _table_ready:
-        await pool.execute(_CREATE)
-        _table_ready = True
+def forget_checks(user_id: str, session_id: str | None = None) -> None:
+    """Check this user's sessions (or one session) again on their next request."""
+    for key in [k for k in _checked if k[0] == user_id and session_id in (None, k[1])]:
+        _checked.pop(key, None)
 
 
 # Read from the database, not the token: a token issued before an admin removed the account still says "not
@@ -116,15 +121,14 @@ async def _claim(user_id: str, session_id: str) -> bool:
     """Take or keep the account for this session; False while another session is using it."""
     from app.data import _pg
 
-    pool = await _pg()
-    await _ensure_table(pool)
-    return await pool.fetchval(_CLAIM, user_id, session_id) is not None
+    return await (await _pg()).fetchval(_CLAIM, user_id, session_id) is not None
 
 
 async def release(user_id: str, session_id: str) -> None:
     """Sign-out: free the account at once instead of after HOLD_FOR."""
     from app.data import _pg
 
+    forget_checks(user_id, session_id)
     await (await _pg()).execute(
         "delete from dashboard_presence where user_id = $1::uuid and session_id = $2::uuid", user_id, session_id
     )
@@ -134,24 +138,37 @@ async def _check_session(claims: dict) -> None:
     session_id = claims.get("session_id")
     if not session_id:
         return
+    key = (claims["sub"], session_id)
+    now = time.monotonic()
+    if now - _checked.get(key, float("-inf")) < CHECKED_FOR:
+        return
     try:
         ended, removed = await _account(claims["sub"], session_id)
         holds = ended or removed or await _claim(claims["sub"], session_id)
-    except Exception:  # noqa: BLE001 - an extra check on top of the verified token (e.g. table not created yet)
-        # Logged as an error: while this fails, removed accounts and second sign-ins are not refused.
-        log.error("Account / sign-in check failed; allowing the token", exc_info=True)
-        return
+    except asyncpg.UndefinedTableError as exc:
+        log.error("Sign-in check failed: dashboard_presence is missing", exc_info=True)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, NO_PRESENCE_TABLE) from exc
+    except HTTPException:
+        raise  # e.g. DATABASE_URL not set: already a clear answer
+    except Exception as exc:  # noqa: BLE001 - any other failure: refuse, don't guess
+        log.error("Sign-in check failed; refusing the request", exc_info=True)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, CHECK_FAILED) from exc
     if removed:
         raise _unauthorized("Account removed")
     if ended:
         raise _unauthorized("Session ended")
     if not holds:
         raise HTTPException(status.HTTP_409_CONFLICT, IN_USE)
+    if len(_checked) > 10_000:  # never grows without bound: old entries are useless after CHECKED_FOR anyway
+        for k in [k for k, t in _checked.items() if now - t >= CHECKED_FOR]:
+            del _checked[k]
+    _checked[key] = now
 
 
 async def current_user(creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> dict:
     """FastAPI dependency: 401 unless the request carries a valid Supabase access token from a current sign-in;
-    403 for an account without a dashboard role; 409 while another session is using the account."""
+    403 for an account without a dashboard role; 409 while another session is using the account; 503 when the
+    sign-in check itself can't run (never let through unchecked)."""
     if creds is None:
         raise _unauthorized("Missing bearer token")
     try:

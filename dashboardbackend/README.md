@@ -12,6 +12,7 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 | `GET /emails/sent`, `/emails/sent/{id}`                    | Bearer | sent emails                                  |
 | `GET /emails/replies`, `/emails/replies/{id}`              | Bearer | replies, with the email each one answers     |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |
+| `POST /inbox/check`, `POST /inbox/label`                 | Bearer | read new replies from the connected Gmail inbox (read only); a person's label for a reply (`app/inbox.py`) |
 
 Protect a new route with `user: dict = Depends(current_user)` (`app/auth.py`).
 
@@ -26,6 +27,10 @@ lead / outreach / content services ──write──▶ Supabase Postgres ◀─
    A company with no contact (`NEEDS_CONTACT`) gets its email from a person here: `POST /needs-contact/{id}/contact` calls
    the SQL function `submit_manual_contact()` (Marketing-AI-Agent migration `0013`), the agent drafts the email and posts the
    approval request to Slack. Nothing is sent from here.
+   Its own tables (migration `007_inbox_replies.sql`, run by hand) hold the replies this backend reads from Gmail itself
+   (`POST /inbox/check`: the connected inbox, read only, matched to our emails with the agent's rules) and the labels
+   people give replies on Positive Leads. It needs `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (same values as the
+   dashboard's) to read the Gmail access the dashboard saved. Until 007 is run, everything reads as before.
 2. The dashboard logs the user in with Supabase Auth and calls this API through `apiFetch()` in
    `dashboard/core/api.js`, sending `Authorization: Bearer <access_token>`.
 3. Every route in `app/data.py` runs `current_user` first (`app/auth.py`), which verifies the token's
@@ -51,10 +56,11 @@ one-line `apiFetch()` function for it in `api.js`.
 ```bash
 cd dashboardbackend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # the app's packages plus pytest and ruff (Render only needs requirements.txt)
 # create .env with SUPABASE_URL and DATABASE_URL (the pooled Postgres connection string)
 uvicorn app.main:app --reload --port 8000
-python -m pytest
+python -m pytest   # the real-SQL tests (test_mail_sql, test_inbox_sql) need Postgres: sudo apt install postgresql
+ruff check .        # lint (the same check CI runs on every push)
 ```
 
 Tokens are verified against the project's JWKS (`/auth/v1/.well-known/jwks.json`); set `SUPABASE_JWT_SECRET`

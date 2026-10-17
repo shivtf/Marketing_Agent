@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decrypt, encrypt, signState, verifyState, STATE_MS } from './gmailTokens.js';
-import { bodyText, detail, gmailQuery, htmlToText, parseAddress, summary } from './gmailMessage.js';
+import { bodyText, detail, gmailQuery, htmlToText, onlyFrom, parseAddress, summary } from './gmailMessage.js';
 
 const SECRET = 'test-secret-not-real';
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64url');
@@ -119,4 +119,10 @@ test('the Gmail search for each view', () => {
   assert.equal(gmailQuery({ from: [] }), null);
   assert.equal(gmailQuery({ from: ['a b@x.test', 'x)@y.test'] }), null);
   assert.equal(gmailQuery({ q: 'x'.repeat(500) }).length, 'in:inbox '.length + 200);
+});
+
+test('employees only get mail from lead addresses, whatever the search', () => {
+  const items = [{ from: { email: 'priya@acme.co' } }, { from: { email: 'hr@ourcompany.co' } }, { from: { email: '' } }];
+  assert.deepEqual(onlyFrom(items, ['Priya@Acme.co']), [{ from: { email: 'priya@acme.co' } }]);
+  assert.deepEqual(onlyFrom(items, []), []);
 });

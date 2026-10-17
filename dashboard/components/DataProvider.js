@@ -25,12 +25,11 @@ const LISTS = {
     source: filter.source === 'all' ? undefined : filter.source,
   }),
   sent: (page, f) => api.getSentEmails({ page, limit: PAGE_SIZE, q: f.q, status: f.status === 'all' ? undefined : f.status }),
-  replies: (page, f) => api.getReplies({ page, limit: PAGE_SIZE, q: f.q, label: f.label === 'all' ? undefined : f.label }),
   blogs: (page) => api.getBlogs({ page, limit: PAGE_SIZE }),
 };
 const EMPTY_PAGE = { items: [], total: 0, page: 1, limit: PAGE_SIZE };
 // History search + filters, per list. The search text is already debounced by the page.
-const LIST_FILTERS = { sent: { q: '', status: 'all' }, replies: { q: '', label: 'all' } };
+const LIST_FILTERS = { sent: { q: '', status: 'all' } };
 // Agent status: poll every 3 s while a pause/resume is being applied, otherwise every 5 s (dashboard-integration
 // section 3.5: an offline assistant shows within seconds, never as an endless spinner).
 const OPTIONS = {
@@ -38,7 +37,7 @@ const OPTIONS = {
 };
 const EMPTY = {
   agent: null, stats: null,
-  positive: { positive: [], review: [], questions: [], notInterested: [], repliedLeads: 0 },
+  positive: { positive: [], review: [], questions: [], notInterested: [], unsubscribe: [], repliedLeads: 0 },
   needsContact: { items: [], total: 0 },
 };
 
@@ -72,7 +71,7 @@ export function DataProvider({ children }) {
     defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
   }));
   const [filter, setLeadsFilter] = useState({ status: 'all', source: 'all' });
-  const [pages, setPages] = useState({ leads: 1, sent: 1, replies: 1, blogs: 1 });
+  const [pages, setPages] = useState({ leads: 1, sent: 1, blogs: 1 });
   const [positiveView, setPositiveView] = useState({ q: '', sort: 'followup' });
   const [listFilters, setListFilters] = useState(LIST_FILTERS);
   // A new lead filter starts again from page 1 (the old page may not exist in the filtered list).

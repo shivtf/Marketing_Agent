@@ -1,10 +1,12 @@
 import secrets
 import time
 
+import asyncpg
 import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from app import auth
 from app.main import app
 
 SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
@@ -103,7 +105,7 @@ def presence(monkeypatch):
     account (None = free), `fail` = the database can't be reached."""
     from app import data
 
-    state = {"alive": True, "removed": False, "holder": None, "fail": False, "released": []}
+    state = {"alive": True, "removed": False, "holder": None, "fail": False, "no_table": False, "released": []}
 
     class Pool:
         async def fetchrow(self, sql, *_args):
@@ -111,6 +113,8 @@ def presence(monkeypatch):
             return {"session_alive": state["alive"], "removed": state["removed"]}
 
         async def fetchval(self, sql, *args):
+            if state["no_table"]:
+                raise asyncpg.UndefinedTableError('relation "dashboard_presence" does not exist')
             user_id, session_id = args
             if state["holder"] in (None, session_id):
                 state["holder"] = session_id
@@ -118,8 +122,7 @@ def presence(monkeypatch):
             return None
 
         async def execute(self, sql, *args):
-            if "create table" in sql:
-                return
+            assert "create table" not in sql  # tables come from migrations only, never from the running backend
             user_id, session_id = args
             state["released"].append(session_id)
             if state["holder"] == session_id:
@@ -164,6 +167,42 @@ def test_signout_frees_the_account(presence):
     assert presence["released"] == [SESSION] and presence["holder"] is None
 
 
-def test_session_check_failure_allows_token(presence):
+def test_session_check_failure_refuses_the_request(presence):
+    # Fails closed: during an outage a removed account or a second sign-in must not slip through. 503, not 401/409,
+    # so the dashboard keeps the user signed in and offers Retry.
     presence["fail"] = True
-    assert _get(_token(session_id=SESSION)).status_code == 200
+    res = _get(_token(session_id=SESSION))
+    assert res.status_code == 503 and res.json()["detail"] == "Couldn't check your sign-in right now. Try again in a moment."
+
+
+def test_missing_presence_table_is_named(presence):
+    presence["no_table"] = True
+    res = _get(_token(session_id=SESSION))
+    assert res.status_code == 503 and "001_dashboard_presence.sql" in res.json()["detail"]
+
+
+def test_a_passed_check_is_reused_briefly(presence, monkeypatch):
+    calls = []
+    real = auth._account
+
+    async def counting(*args):
+        calls.append(args)
+        return await real(*args)
+
+    monkeypatch.setattr(auth, "_account", counting)
+    token = _token(session_id=SESSION)
+    assert _get(token).status_code == 200 and _get(token).status_code == 200
+    assert len(calls) == 1  # the second request within CHECKED_FOR skipped the database
+    # After sign-out the session is checked again at once.
+    client.post("/auth/signout", headers={"Authorization": f"Bearer {token}"})
+    _get(token)
+    assert len(calls) >= 2
+
+
+def test_a_failed_check_is_never_remembered(presence):
+    presence["fail"] = True
+    token = _token(session_id=SESSION)
+    assert _get(token).status_code == 503
+    presence["fail"] = False
+    presence["removed"] = True
+    assert _get(token).status_code == 401  # checked again, not let through from memory

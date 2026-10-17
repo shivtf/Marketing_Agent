@@ -3,6 +3,8 @@
 //   section + list(sectionData, leadsFilter, positiveView) -> items for Previous/Next,
 // and load(id) -> detail
 //   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox? }  (no body = no body section)
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { Badge, StatusBadge, SourceCell, ExtLink, MetaRow } from './ui';
 import { pad, fmtDate, toneOf, REPLY_LABELS, replyLabel } from '@/core/format';
@@ -12,6 +14,51 @@ import * as api from '@/core/api';
 const ActionButton = ({ onClick, icon, children }) => (
   <button className="btn outline block" onClick={onClick}><Icon name={icon} /> {children}</button>
 );
+
+// "Label this reply": a person's label for the reply the lead is judged on. It is shown instead of the agent's (or
+// fills in a reply read from Gmail), the lead moves to that group, and the labels become the reviewed examples a
+// future classifier can learn from. The mail agent does not see it.
+function LabelReply({ d }) {
+  const qc = useQueryClient();
+  const [label, setLabel] = useState(d.replyLabel || '');
+  const [state, setState] = useState({ busy: false, error: null });
+  const save = async (next) => {
+    setState({ busy: true, error: null });
+    try {
+      await api.labelReply({ source: d.replySource, replyId: d.latestReply.id, label: next });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['section', 'positive'] }),
+        qc.invalidateQueries({ queryKey: ['detail'] }),
+      ]);
+      setState({ busy: false, error: null });
+    } catch (err) {
+      setState({ busy: false, error: err.message });
+    }
+  };
+  const mine = d.labelledBy;
+  return (
+    <div className="label-reply">
+      <div className="label-reply-row">
+        <select className="select" aria-label="Label this reply" value={label} disabled={state.busy}
+          onChange={(e) => setLabel(e.target.value)}>
+          {!d.replyLabel && <option value="" disabled>Choose a label</option>}
+          {Object.entries(REPLY_LABELS).map(([k, text]) => <option key={k} value={k}>{text}</option>)}
+        </select>
+        <button className="btn small-btn primary" type="button" disabled={state.busy || !label || label === d.replyLabel}
+          onClick={() => save(label)}>
+          {state.busy ? 'Saving…' : 'Save'}
+        </button>
+        {mine && <button className="btn small-btn" type="button" disabled={state.busy} onClick={() => save(null)}>Remove</button>}
+      </div>
+      <div className="muted small">
+        {mine
+          ? `Labelled by ${mine.by || 'a person'} on ${fmtDate(mine.at, 'date')}.${d.originalLabel ? ` The agent said: ${replyLabel(d.originalLabel)}.` : ''}`
+          : 'Read the reply below, then choose what it means.'}
+      </div>
+      {state.error && <div className="confirm-error" role="alert">{state.error}</div>}
+    </div>
+  );
+}
 
 // The lead (company) an email or reply belongs to.
 const LeadRow = ({ d }) => <MetaRow key="lead" k="Lead">{d.company || <span className="muted">Unknown company</span>}</MetaRow>;
@@ -35,7 +82,11 @@ export function getKinds(goto) {
             <SourceCell source={d.source} />
             <div className="profile-link"><ExtLink href={d.profileUrl}>View profile</ExtLink></div>
           </MetaRow>,
-          <MetaRow key="mail" k="Email"><a className="mail-link" href={`mailto:${d.email}`}><Icon name="mail" />{d.email}</a></MetaRow>,
+          <MetaRow key="mail" k="Email">
+            {d.email
+              ? <a className="mail-link" href={`mailto:${d.email}`}><Icon name="mail" />{d.email}</a>
+              : <span className="muted small">No contact yet: add one on the Needs Contact page.</span>}
+          </MetaRow>,
           <MetaRow key="added" k="Date Added">{fmtDate(d.addedAt)}</MetaRow>,
           <MetaRow key="status" k="Status"><StatusBadge text={d.status} /></MetaRow>,
           <MetaRow key="last" k="Last Contact Date">{fmtDate(d.lastContactAt)}</MetaRow>,
@@ -64,12 +115,29 @@ export function getKinds(goto) {
       const text = REPLY_LABELS[d.replyLabel];
       const extra = [
         <MetaRow key="label" k="Latest Reply">
-          {text ? <Badge text={text} tone={toneOf(text)} /> : <span className="muted">—</span>}
+          {text ? <Badge text={text} tone={toneOf(text)} /> : <Badge text="Not labelled" tone="gray" />}
         </MetaRow>,
-        ...(d.reviewReason ? [
+        ...(d.reviewReason && d.replyGroup !== 'unsubscribe' ? [
           <MetaRow key="review" k="Needs Review">
             <Badge text="Needs review" tone={toneOf('Needs review')} /> <span className="muted small">{d.reviewReason}</span>
           </MetaRow>,
+        ] : []),
+        ...(d.replyGroup === 'unsubscribe' ? [
+          <MetaRow key="unsub" k="Unsubscribe">
+            <span className="small">
+              Unsubscribe requested — action required in the mail agent to stop future emails.
+              {d.reviewReason && <span className="muted"> ({d.reviewReason}.)</span>}
+            </span>
+          </MetaRow>,
+        ] : []),
+        ...(d.replySource === 'inbox' ? [
+          <MetaRow key="from" k="Reply Found">
+            <span className="small">Read from Gmail by the dashboard. The mail agent has not seen it, so its follow-ups are not stopped.</span>
+          </MetaRow>,
+        ] : []),
+        ...(d.latestReply ? [
+          // key: a fresh control for each reply, so stepping to the next lead doesn't carry this one's choice.
+          <MetaRow key="labelit" k="Label This Reply"><LabelReply key={d.latestReply.id} d={d} /></MetaRow>,
         ] : []),
       ];
       return { ...v, rows: [...v.rows.slice(0, 7), ...extra, ...v.rows.slice(7)] };
@@ -79,6 +147,7 @@ export function getKinds(goto) {
   const reviewLead = fromPositivePage('review');
   const questionLead = fromPositivePage('questions');
   const notInterestedLead = fromPositivePage('notInterested');
+  const unsubscribeLead = fromPositivePage('unsubscribe');
 
   const sent = {
     paged: 'sent',
@@ -108,8 +177,9 @@ export function getKinds(goto) {
     }),
   };
 
+  // Opened only from a sent email ("Open linked reply"): there is no replies list behind it, so no Previous/Next.
   const reply = {
-    paged: 'replies',
+    list: () => [],
     heading: 'Reply Details',
     load: api.getReply,
     describe: (d) => {
@@ -123,6 +193,11 @@ export function getKinds(goto) {
           <MetaRow key="subj" k="Subject">{d.subject}</MetaRow>,
           <MetaRow key="recv" k="Date/Time Received">{fmtDate(d.receivedAt)}</MetaRow>,
           <MetaRow key="label" k="Reply Type"><Badge text={replyLabel(d.label)} tone={toneOf(replyLabel(d.label))} /></MetaRow>,
+          ...(d.replySource === 'inbox' ? [
+            <MetaRow key="found" k="Reply Found">
+              <span className="small">Read from Gmail by the dashboard. The mail agent has not seen it; label it on Positive Leads.</span>
+            </MetaRow>,
+          ] : []),
           <LeadRow key="lead" d={d} />,
         ],
         // A reply may not be linked to one of our emails (e.g. it arrived on a new thread).
@@ -173,5 +248,5 @@ export function getKinds(goto) {
     },
   };
 
-  return { lead, positiveLead, reviewLead, questionLead, notInterestedLead, sent, reply, blog };
+  return { lead, positiveLead, reviewLead, questionLead, notInterestedLead, unsubscribeLead, sent, reply, blog };
 }

@@ -25,18 +25,19 @@ The test leads, one per case, and where each should show (Positive Leads tab / D
     Silent Sam        emailed, no reply                                    -                 Awaiting
     Bounced Ben       the email bounced                                    -                 Bounced
     New Nora          not emailed yet                                      -                 Not Sent
+    Waiting Co        (company only) qualified, waiting for a contact      -                 No Contact
+    Rejected Co / Discovered Co  (company only) not in the pipeline        -                 not listed
 """
 
 import asyncio
-import glob
+import pathlib
 import secrets
-import shutil
-import subprocess
 import time
 
 import asyncpg
 import jwt
 import pytest
+from conftest import throwaway_postgres
 from fastapi.testclient import TestClient
 
 from app import data
@@ -48,7 +49,8 @@ SECRET = secrets.token_hex(32)  # signs fake test tokens only
 SCHEMA = """
 create table companies (
   id uuid primary key default gen_random_uuid(), name text, domain text, source text, source_url text,
-  project_summary text, industry text);
+  project_summary text, industry text, lead_status text not null default 'SENT',
+  created_at timestamptz not null default now());
 create table contacts (
   id uuid primary key default gen_random_uuid(), company_id uuid references companies, name text, email text,
   role text, collected_at timestamptz not null default now(), last_engaged_at timestamptz);
@@ -80,15 +82,19 @@ LEADS = {
 }
 
 
-def _pg_bin(name: str) -> str | None:
-    found = shutil.which(name) or sorted(glob.glob(f"/usr/lib/postgresql/*/bin/{name}"))
-    return found if isinstance(found, str) else (found[-1] if found else None)
-
-
 async def _seed(dsn: str) -> None:
     conn = await asyncpg.connect(dsn)
     try:
         await conn.execute(SCHEMA)
+        # The indexes the dashboard adds to these tables: proves the migration runs (twice: it is safe to repeat).
+        indexes = (pathlib.Path(__file__).parent.parent / "migrations" / "008_lead_query_indexes.sql").read_text()
+        await conn.execute(indexes)
+        await conn.execute(indexes)
+        # Companies with no contact: one still in the pipeline (a lead), two that are not.
+        await conn.execute("""insert into companies (name, domain, source, lead_status) values
+            ('Waiting Co', 'waiting.test', 'leadgen:search', 'NEEDS_CONTACT'),
+            ('Rejected Co', 'rejected.test', 'leadgen:search', 'REJECTED'),
+            ('Discovered Co', 'discovered.test', 'leadgen:search', 'DISCOVERED')""")
         for name, (outreach, replies, answer) in LEADS.items():
             company = await conn.fetchval(
                 "insert into companies (name, domain, source) values ($1, $2, 'leadgen:search') returning id",
@@ -119,29 +125,17 @@ async def _seed(dsn: str) -> None:
 
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
-    initdb, pg_ctl = _pg_bin("initdb"), _pg_bin("pg_ctl")
-    if not (initdb and pg_ctl):
-        pytest.skip("Postgres is not installed (sudo apt install postgresql); the real-SQL mail tests are skipped")
-    root = tmp_path_factory.mktemp("pg")
-    datadir, sock = root / "data", root / "sock"
-    sock.mkdir()
-    subprocess.run([initdb, "-D", str(datadir), "-U", "postgres", "-A", "trust", "--no-sync"],
-                   check=True, capture_output=True)
-    # Only a socket in the temporary folder: no port, so it can't clash with another Postgres on this machine.
-    subprocess.run([pg_ctl, "-D", str(datadir), "-l", str(root / "log"), "-w", "start",
-                    "-o", f"-k {sock} -c listen_addresses='' -F"], check=True, capture_output=True)
-    try:
-        dsn = f"postgresql://postgres@/postgres?host={sock}"
+    with throwaway_postgres(tmp_path_factory.mktemp("pg")) as dsn:  # conftest.py: skipped without Postgres
         asyncio.run(_seed(dsn))
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv("DATABASE_URL", dsn)
             mp.setenv("SUPABASE_URL", "https://example.supabase.co")
             mp.setenv("SUPABASE_JWT_SECRET", SECRET)
             mp.setattr(data, "_pool", None)  # a new pool, on this database
+            mp.setattr(data, "_inbox", {"ready": False, "checked": 0.0})  # look for migration 007 afresh (absent here)
             with TestClient(app) as c:  # one event loop for every request, so the pool can be reused
+                c.app_state_dsn = dsn  # for tests that look at the database directly
                 yield c
-    finally:
-        subprocess.run([pg_ctl, "-D", str(datadir), "-m", "immediate", "stop"], capture_output=True)
 
 
 def _auth():
@@ -188,9 +182,10 @@ def test_unsure_replies_say_why(client):
 
 def test_dashboard_counts(client):
     stats = _get(client, "/leads/stats")
-    assert {k: stats[k] for k in ("total", "notSent", "awaiting", "responded", "bounced")} == {
-        "total": 13,
+    assert {k: stats[k] for k in ("total", "notSent", "noContact", "awaiting", "responded", "bounced")} == {
+        "total": 14,
         "notSent": 1,  # New Nora
+        "noContact": 1,  # Waiting Co (Rejected Co and Discovered Co are not leads)
         "awaiting": 2,  # Silent Sam, OutOfOffice Olga (an out-of-office reply is not a response)
         "responded": 9,  # the same 9 as "Leads Replied" on Positive Leads
         "bounced": 1,  # Bounced Ben
@@ -207,6 +202,7 @@ def test_each_lead_status(client):
         "Silent Sam": "Sent",
         "Bounced Ben": "Bounced",
         "New Nora": "Not Sent",
+        "Waiting Co": "No Contact",
     }
 
 
@@ -214,3 +210,25 @@ def test_lead_is_judged_on_its_last_reply(client):
     carl = next(lead for lead in _get(client, "/leads?limit=200")["items"] if lead["name"] == "ChangedMind Carl")
     detail = _get(client, f"/leads/{carl['id']}")
     assert detail["latestReply"]["text"] == "Not now."
+
+
+def test_lead_queries_use_the_indexes(client):
+    # With sequential scans off, the planner picks an index whenever one fits: the reply lookups must find one.
+    async def plan():
+        conn = await asyncpg.connect(client.app_state_dsn)
+        try:
+            await conn.execute("set enable_seqscan = off")
+            return "\n".join(r[0] for r in await conn.fetch(
+                "explain select 1 from replies r where r.contact_id = gen_random_uuid() order by received_at desc limit 1"))
+        finally:
+            await conn.close()
+
+    assert "dashboard_replies_contact_idx" in asyncio.run(plan())
+
+
+def test_a_company_without_a_contact_opens_as_a_lead(client):
+    waiting = next(lead for lead in _get(client, "/leads?status=no_contact")["items"])
+    assert waiting["name"] == "Waiting Co"
+    detail = _get(client, f"/leads/{waiting['id']}")
+    assert detail["email"] is None and detail["conversation"] is None and detail["latestReply"] is None
+    assert detail["companyUrl"] == "https://waiting.test" and detail["status"] == "No Contact"

@@ -71,8 +71,18 @@ export async function getPositiveLeads() {
   const data = await apiFetch('/leads/positive');
   const ok = data && ['positive', 'review', 'questions'].every((k) => Array.isArray(data[k]));
   if (!ok) throw new ApiError('Unexpected response from /leads/positive. Is the backend up to date?', 200);
-  return { notInterested: [], ...data };
+  return { notInterested: [], unsubscribe: [], ...data };
 }
+
+// Reads new replies from the connected Gmail inbox (read only; backend app/inbox.py)
+// -> { checked, newReplies, processed, remaining, followUpsChecked }. 503 with a readable detail when Gmail is not set
+// up or connected, or migration 007 has not been run.
+export const checkInbox = () => apiFetch('/inbox/check', { method: 'POST' });
+// A person's label for a reply (source: 'agent' | 'inbox'; label null removes it) -> { ok }. Shown instead of the agent's
+// label; the mail agent does not see it.
+export const labelReply = ({ source, replyId, label }) => apiFetch('/inbox/label', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, replyId, label }),
+});
 
 // ---------- Leads that need a contact (dashboardbackend/app/needs_contact.py) ----------
 
@@ -90,8 +100,7 @@ export const addContact = (id, contact) => apiFetch(`/needs-contact/${encodeURIC
 // q: search text; status: 'sent' | 'failed'. -> { items, total, page, limit, failed } (failed: of all sent emails)
 export const getSentEmails = ({ q, status, page, limit } = {}) => apiFetch(`/emails/sent${qs({ q, status, page, limit })}`);
 export const getSentEmail = (id) => apiFetch(`/emails/sent/${encodeURIComponent(id)}`);
-// q: search text; label: a reply label, 'unclassified' or 'human' (not out-of-office or bounce).
-export const getReplies = ({ q, label, page, limit } = {}) => apiFetch(`/emails/replies${qs({ q, label, page, limit })}`);
+// One reply, for the drawer (opened from a sent email's "Open linked reply").
 export const getReply = (id) => apiFetch(`/emails/replies/${encodeURIComponent(id)}`);
 
 // ---------- Blogs ----------

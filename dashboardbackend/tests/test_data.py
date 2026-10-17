@@ -18,6 +18,19 @@ def _env(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", SECRET)
 
 
+@pytest.fixture(autouse=True)
+def inbox(monkeypatch):
+    """Whether migration 007 (Gmail-read replies, people's labels) "exists": no by default, so these tests never look
+    for a database. inbox["ready"] = True switches a test to the queries that include it."""
+    state = {"ready": False}
+
+    async def ready():
+        return state["ready"]
+
+    monkeypatch.setattr(data, "inbox_ready", ready)
+    return state
+
+
 def _auth():
     claims = {"sub": "u1", "aud": "authenticated", "exp": int(time.time()) + 60, "app_metadata": {"role": "employee"}}
     return {"Authorization": f"Bearer {jwt.encode(claims, SECRET, algorithm='HS256')}"}
@@ -101,6 +114,7 @@ def test_lead_stats(monkeypatch):
     assert client.get("/leads/stats", headers=_auth()).json() == {
         "total": 5,
         "notSent": 2,
+        "noContact": 0,
         "awaiting": 1,
         "responded": 1,
         "bounced": 1,
@@ -108,9 +122,11 @@ def test_lead_stats(monkeypatch):
     }
 
 
-def _reply(id_, label, body="Hi Alex,\n\nSounds good.\n\nThanks", note=None, at="2026-10-01", answered=None, queued=False):
+def _reply(id_, label, body="Hi Alex,\n\nSounds good.\n\nThanks", note=None, at="2026-10-01", answered=None, queued=False,
+           source="agent", match=None, we_replied=None, labelled_at=None):
     return {"id": id_, "label": label, "reviewNote": note, "body": body, "repliedAt": at,
-            "answeredAt": answered, "answerQueued": queued}
+            "answeredAt": answered, "answerQueued": queued, "replySource": source, "matchMethod": match,
+            "weRepliedAt": we_replied, "originalLabel": label, "labelledAt": labelled_at}
 
 
 @pytest.fixture
@@ -119,7 +135,7 @@ def positive_rows(monkeypatch):
     Oct 1) and 9 leads that replied in person (classified or not)."""
     def use(rows):
         async def fake_rows(sql, *_):
-            if "label is null" in sql:
+            if "as pending" in sql:
                 return [{"pending": 2, "since": "2026-10-01T08:00:00+00:00"}]
             return [dict(r) for r in rows]
 
@@ -260,7 +276,9 @@ def lead_db(monkeypatch):
     """Fake pool for /leads/{id}: the lead, its latest human reply (`reply`, None = no reply) and latest sent email."""
     import datetime as dt
 
-    state = {"reply": {"id": "r1", "label": "interested", "review_note": None,
+    state = {"reply": {"id": "r1", "label": "interested", "review_note": None, "email_id": "e0",
+                       "reply_source": "agent", "match_method": None, "original_label": "interested",
+                       "labelled_by": None, "labelled_at": None,
                        "received_at": dt.datetime(2026, 10, 5, 9, 30, tzinfo=dt.UTC),
                        "body": "Hi Alex,\n\nYes, let's talk.\n\nOn Mon, 5 Oct 2026, Alex <a@x.co> wrote:\n> Interested?"}}
 
