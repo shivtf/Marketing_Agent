@@ -799,3 +799,9 @@ a.row-icon:hover { background: var(--accent-soft); color: var(--accent); }
 .gmail-view .file-view-head .icon-btn { margin-left: 4px; }
 .gmail-view .meta { margin: 0 0 12px; }
 .gmail-body { white-space: normal; font-size: 14px; background: var(--card); max-height: 55vh; }
+
+/* Needs Contact table (components/NeedsContactView.js): the reason wraps and Edit never leaves the card */
+.needs-reason { max-width: 280px; white-space: normal; line-height: 1.4; }
+td.needs-edit, th.needs-edit { width: 1%; white-space: nowrap; text-align: right; }
+td.needs-edit .btn { height: 32px; padding: 0 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

@@ -55,7 +55,7 @@ def test_list_is_a_page_of_waiting_companies_strongest_first(monkeypatch):
 
     async def rows(sql, *args):
         calls.append((sql, args))
-        return [{"id": "a", "company": "Acme", "website": "https://acme.com", "score": 72, "form_url": None}]
+        return [{"id": "a", "company": "Acme", "website": "https://acme.com", "score": 72, "formUrl": None}]  # as _rows returns it (camelCase)
 
     async def value(sql, *args):
         return 1
