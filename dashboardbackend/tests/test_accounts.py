@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app import accounts, data
 from app.main import app
 
+_FUNCTIONS = ("dashboard_account_state(", "dashboard_claim(", "dashboard_user_role(", "dashboard_end_sessions(")
 SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
 client = TestClient(app)
 ADMIN = "11111111-1111-4111-8111-111111111111"
@@ -35,6 +36,8 @@ def db(monkeypatch):
 
     class Pool:
         async def fetchval(self, sql, *_):
+            if any(f in sql for f in _FUNCTIONS):  # a database without migrations/007
+                raise asyncpg.UndefinedFunctionError(f"function does not exist: {sql[:40]}")
             assert "raw_app_meta_data->>'role'" in sql
             return state["role"]
 

@@ -51,10 +51,11 @@ export const requestedBy = (user) => (user.email || user.id).slice(0, 100);
 // the campaign that is). Turning it on again does not start anything: that needs an approval. Best effort, after the answer.
 export async function switchOffCampaign(id, user) {
   try {
-    const view = await gateway(`/v1/campaigns/${id}`);
+    const view = await gateway(`/v1/campaigns/${id}`, { user });
     if (!(view.state === 'PUBLISHED' || view.review_view?.live)) return;
     await gateway(`/v1/campaigns/${id}/requests`, {
       method: 'POST',
+      user,
       body: { request_type: 'deactivate', payload: {}, requested_by: requestedBy(user), idempotency_key: `deactivate-slider-${id}-${Date.now()}` },
     });
   } catch (e) {
@@ -68,13 +69,14 @@ export async function switchOffCampaign(id, user) {
 // because of it. A campaign the agent has never seen (state NEW) or has already closed needs nothing.
 export async function closeCampaign(id, user) {
   try {
-    const view = await gateway(`/v1/campaigns/${id}`);
+    const view = await gateway(`/v1/campaigns/${id}`, { user });
     const steps = [];
     if (view.state === 'PUBLISHED' || view.review_view?.live) steps.push('deactivate');
     if (!['NEW', 'DISCARDED', 'PUBLISHED'].includes(view.state)) steps.push('discard');
     for (const type of steps) {
       await gateway(`/v1/campaigns/${id}/requests`, {
         method: 'POST',
+        user,
         body: { request_type: type, payload: {}, requested_by: requestedBy(user), idempotency_key: `${type}-deleted-${id}` },
       });
     }
