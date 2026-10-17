@@ -74,6 +74,17 @@ export async function getPositiveLeads() {
   return { notInterested: [], ...data };
 }
 
+// ---------- Leads that need a contact (dashboardbackend/app/needs_contact.py) ----------
+
+// Qualified companies the Marketing Agent found no email for -> { items: [{ id, company, website, score, about, formUrl,
+// reason, since }], total, page, limit }, strongest first.
+export const getNeedsContact = () => apiFetch('/needs-contact?limit=200');
+// Saves the email a person found: { email, name?, role? } -> { ok }. The agent then writes the email and posts the
+// approval request to Slack. Refusals (bad address, already handled) come back as an ApiError with a readable message.
+export const addContact = (id, contact) => apiFetch(`/needs-contact/${encodeURIComponent(id)}/contact`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(contact),
+});
+
 // ---------- Emails ----------
 
 // q: search text; status: 'sent' | 'failed'. -> { items, total, page, limit, failed } (failed: of all sent emails)
