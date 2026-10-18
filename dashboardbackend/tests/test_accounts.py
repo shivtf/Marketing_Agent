@@ -87,7 +87,7 @@ def test_refused_by_the_database_is_explained(db):
 def test_end_other_sessions_keeps_this_one(db, monkeypatch):
     from app import auth
 
-    async def ok(_claims):  # skip the one-sign-in check: covered in test_auth
+    async def ok(_claims, _method="GET"):  # skip the one-sign-in check: covered in test_auth
         return None
 
     monkeypatch.setattr(auth, "_check_session", ok)
