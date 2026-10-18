@@ -31,6 +31,7 @@ export const POST = handle(async (request, { params }) => {
   try {
     const sent = await gateway(`/v1/campaigns/${id}/requests`, {
       method: 'POST',
+      user,
       body: { request_type: body.request_type, payload, base_revision: base, idempotency_key: key, requested_by: requestedBy(user) },
     });
     return Response.json(sent, { status: 202 });

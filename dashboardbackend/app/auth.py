@@ -96,6 +96,15 @@ def forget_checks(user_id: str, session_id: str | None = None) -> None:
         _checked.pop(key, None)
 
 
+async def call_or_sql(pool, method: str, fn_sql: str, raw_sql: str, *args):
+    """The narrow function from migrations/009 (the limited login), or, while that file is not applied yet, the same query
+    straight on the tables (which only the owner login may run)."""
+    try:
+        return await getattr(pool, method)(fn_sql, *args)
+    except asyncpg.UndefinedFunctionError:
+        return await getattr(pool, method)(raw_sql, *args)
+
+
 # Read from the database, not the token: a token issued before an admin removed the account still says "not
 # removed" until it expires (up to an hour), and the account's sessions may still exist.
 _ACCOUNT = """
@@ -111,7 +120,14 @@ async def _account(user_id: str, session_id: str) -> tuple[bool, bool]:
     """(session ended, account removed or banned) for the token's user and sign-in session."""
     from app.data import _pg  # here, not at the top: app.data imports this module
 
-    row = await (await _pg()).fetchrow(_ACCOUNT, user_id, session_id)
+    row = await call_or_sql(
+        await _pg(),
+        "fetchrow",
+        "select session_alive, removed from public.dashboard_account_state($1::uuid, $2::uuid)",
+        _ACCOUNT,
+        user_id,
+        session_id,
+    )
     if row is None:  # the user no longer exists
         return True, True
     return not row["session_alive"], row["removed"]
@@ -121,7 +137,9 @@ async def _claim(user_id: str, session_id: str) -> bool:
     """Take or keep the account for this session; False while another session is using it."""
     from app.data import _pg
 
-    return await (await _pg()).fetchval(_CLAIM, user_id, session_id) is not None
+    pool = await _pg()
+    fn = f"select public.dashboard_claim($1::uuid, $2::uuid, interval '{HOLD_FOR}')"
+    return await call_or_sql(pool, "fetchval", fn, _CLAIM, user_id, session_id) is not None
 
 
 async def release(user_id: str, session_id: str) -> None:
@@ -192,8 +210,12 @@ async def current_admin(user: Annotated[dict, Depends(current_user)]) -> dict:
     from app.data import _pg
 
     try:
-        role = await (await _pg()).fetchval(
-            "select raw_app_meta_data->>'role' from auth.users where id = $1::uuid", user["sub"]
+        role = await call_or_sql(
+            await _pg(),
+            "fetchval",
+            "select public.dashboard_user_role($1::uuid)",
+            "select raw_app_meta_data->>'role' from auth.users where id = $1::uuid",
+            user["sub"],
         )
     except Exception as exc:  # noqa: BLE001 - unlike the checks above, admin actions fail closed
         log.error("Could not read the user's role", exc_info=True)

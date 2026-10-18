@@ -1,21 +1,21 @@
-# Tests and lint for the dashboard backend (Python) and the dashboard (Next.js), on every push and pull request.
-# Nothing here deploys, reads secrets or touches Supabase: the real-SQL tests start their own throwaway Postgres.
 name: CI
-
+# Every push and pull request: the backend's lint and tests, the dashboard's lint and tests, and a production build of
+# the dashboard. Nothing here deploys, reads secrets or touches Supabase: the real-SQL tests start their own throwaway
+# Postgres.
 on:
   push:
   pull_request:
-
+permissions:
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 jobs:
   backend:
+    name: Backend lint and tests (Python 3.12)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: dashboardbackend
@@ -25,18 +25,38 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: dashboardbackend/requirements*.txt
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
-      - run: python -m pytest -q
+      - run: python -m pytest -q tests --junitxml=pytest-report.xml
+      # Failures are also reported as annotations, so they can be read without the log.
+      - name: Report test failures
+        if: failure()
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          for case in ET.parse("pytest-report.xml").iter("testcase"):
+              for bad in list(case.iter("failure")) + list(case.iter("error")):
+                  where = case.get("file") or "dashboardbackend/" + case.get("classname", "").replace(".", "/") + ".py"
+                  msg = ((bad.get("message") or "") + " / " + (bad.text or "")[-1500:]).replace("%", "%25")
+                  msg = msg.replace("\r", "").replace("\n", "%0A")
+                  print(f"::error file={where},line={case.get('line') or 1},title={case.get('name')}::{msg}")
+          PY
 
   dashboard:
+    name: Dashboard lint, tests and build (Node 22)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: dashboard
+    env:
+      # Placeholders: the build only needs well-formed values. Nothing here is a real key.
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      NEXT_PUBLIC_API_URL: http://localhost:8000
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -47,3 +67,4 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - run: npm run build

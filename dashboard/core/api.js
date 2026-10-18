@@ -64,7 +64,7 @@ export const resumeAgent = () => authFetch('/api/ca/state', { method: 'POST', bo
 export const getLeads = ({ status, source, page, limit } = {}) => apiFetch(`/leads${qs({ status, source, page, limit })}`);
 export const getLeadStats = () => apiFetch('/leads/stats');
 export const getLead = (id) => apiFetch(`/leads/${encodeURIComponent(id)}`);
-// -> { positive, review, questions, notInterested, repliedLeads, pending }: leads judged on their latest human reply.
+// -> { positive, review, questions, notInterested, unsubscribe, repliedLeads }: leads judged on their latest human reply.
 // notInterested defaults to empty so a backend deployed before that group still loads.
 // An older backend returns a plain list; fail cleanly (the page shows "Couldn't load" + Retry) instead of crashing.
 export async function getPositiveLeads() {
@@ -75,13 +75,12 @@ export async function getPositiveLeads() {
 }
 
 // Reads new replies from the connected Gmail inbox (read only; backend app/inbox.py)
-// -> { checked, newReplies, processed, remaining, followUpsChecked }. 503 with a readable detail when Gmail is not set
+// -> { checked, newReplies, processed, remaining, rechecked, followUpsChecked, since, repliesWithoutLead }. 503 with a readable detail when Gmail is not set
 // up or connected, or migration 007 has not been run.
 export const checkInbox = () => apiFetch('/inbox/check', { method: 'POST' });
-// A person's label for a reply (source: 'agent' | 'inbox'; label null removes it) -> { ok }. Shown instead of the agent's
-// label; the mail agent does not see it.
-export const labelReply = ({ source, replyId, label }) => apiFetch('/inbox/label', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, replyId, label }),
+// A person's label for a reply read from Gmail (label null removes it) -> { ok }. The mail agent does not see it.
+export const labelReply = ({ replyId, label }) => apiFetch('/inbox/label', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replyId, label }),
 });
 
 // ---------- Leads that need a contact (dashboardbackend/app/needs_contact.py) ----------

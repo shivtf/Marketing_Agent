@@ -1,22 +1,24 @@
 """Replies the dashboard reads from Gmail itself, and the labels people give replies on Positive Leads.
 
-The mail agent reads Gmail only while its pipeline runs, so replies can sit unseen. POST /inbox/check reads the
-connected inbox (app/gmail.py, read only) with the agent's own rules (agent/inbox.py on its origin/main):
+The mail agent only sends; this backend reads every reply. POST /inbox/check reads the connected inbox (app/gmail.py,
+read only):
   - our own mail and Gmail SENT messages are skipped;
   - mailer-daemon / postmaster notices are bounces;
   - a message is a reply when its In-Reply-To / References name an email we sent ('header'), or it is in the Gmail
-    conversation of one ('thread'); a lead's address alone ('sender') is kept but only shown for review;
+    conversation of one ('thread'), or it comes from the address of a lead we emailed ('sender': e.g. a new thread);
   - out-of-office replies are recognised by their headers and subject (app/reply_rules.py).
-Each message is looked at once (inbox_seen); mail the agent already stored is skipped. One exception: mail judged
+Each message is looked at once (inbox_seen), unless the reply or bounce saved from it has since been deleted (e.g. by
+a test-lead cleanup): then it is read again. Another exception: mail judged
 "not a reply" is looked at again (recent mail only, a few per check) when one of our emails was recorded after it was
 seen, so a reply that arrived before its lead or email was in the database is still found. Nothing is ever sent,
-labelled, marked as read or deleted, and the agent's tables are only read.
+labelled, marked as read or deleted, and the agent's tables (emails, contacts, ...) are only read.
 
-  POST /inbox/check  -> { checked, newReplies, processed, remaining, rechecked, followUpsChecked }
-  POST /inbox/label  { source, replyId, label | null } -> { ok }: a person's label for a reply (null removes it)
+  POST /inbox/check  -> { checked, newReplies, processed, remaining, rechecked, followUpsChecked, since,
+                          repliesWithoutLead }
+  POST /inbox/label  { replyId, label | null } -> { ok }: a person's label for a reply (null removes it)
 
-Needs migrations/007_inbox_replies.sql; until it has been run both answer 503 and the rest of the dashboard reads as
-before. Errors are 503 / 502 with a readable detail, never 401 / 409 (the dashboard signs the user out on those).
+Needs migrations/007_inbox_replies.sql; until it has been run both answer 503 saying so. Errors are 503 / 502 with a
+readable detail, never 401 / 409 (the dashboard signs the user out on those).
 """
 
 import asyncio
@@ -52,14 +54,8 @@ _lock = asyncio.Lock()  # one check at a time in this process; the unique Gmail 
 
 
 class LabelIn(BaseModel):
-    source: Literal["agent", "inbox"]  # agent: a replies row; inbox: an inbox_replies row
-    replyId: uuid.UUID
+    replyId: uuid.UUID  # an inbox_replies row
     label: Literal[LABELS] | None  # None: remove the person's label
-
-
-async def _require_tables() -> None:
-    if not await data.inbox_ready():
-        raise HTTPException(503, MIGRATION)
 
 
 # ---------- Check the inbox ----------
@@ -67,12 +63,13 @@ async def _require_tables() -> None:
 
 @router.post("/check")
 async def check() -> dict:
-    await _require_tables()
     async with _lock:
         try:
             return await _check()
         except gmail.GmailError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
+        except asyncpg.UndefinedTableError as exc:
+            raise HTTPException(503, MIGRATION) from exc
         except asyncpg.PostgresError as exc:
             log.error("Inbox check failed in the database", exc_info=True)
             raise HTTPException(503, "Couldn't save what was read from Gmail: the database refused it. Try again.") from exc
@@ -96,19 +93,12 @@ async def _check() -> dict:
         "select min(sent_at) from emails where status in ('sent', 'bounced') and sent_at is not null"
     )
     if start is None:
-        return {"checked": 0, "newReplies": 0, "processed": 0, "remaining": 0, "rechecked": 0, "followUpsChecked": 0}
+        return {"checked": 0, "newReplies": 0, "processed": 0, "remaining": 0, "rechecked": 0, "followUpsChecked": 0,
+                "since": None, "repliesWithoutLead": 0}
     async with gmail.client() as http:
         token = await gmail.access_token(http, conn["refresh_token"])
         ids = await _list_ids(http, token, f"in:inbox after:{int(start.timestamp()) - 86400}")
-        known = {
-            r["gmail_message_id"]
-            for r in await pool.fetch(
-                """select gmail_message_id from inbox_seen where gmail_message_id = any($1::text[])
-                   union
-                   select gmail_message_id from replies where gmail_message_id = any($1::text[])""",
-                ids,
-            )
-        }
+        known = {r["gmail_message_id"] for r in await pool.fetch(_KNOWN, ids)}
         fresh = [i for i in reversed(ids) if i not in known]  # Gmail lists newest first: read the oldest first
         batch = fresh[:BATCH]
         messages = await _fetch_all(http, token, batch)
@@ -119,8 +109,23 @@ async def _check() -> dict:
             log.info("Inbox message %s: %s", gid, outcome)
         rechecked, found = await _recheck(pool, http, token, conn["email"].lower())
         follow_ups = await _refresh_follow_ups(pool, http, token)
+        # Saved replies whose lead is gone: Positive Leads lists leads, so these are not shown; the page says so.
+        without_lead = await pool.fetchval(
+            """select count(*) from inbox_replies s
+                where s.auto_label is null and not exists (select 1 from contacts c where c.id = s.contact_id)"""
+        )
     return {"checked": len(ids), "newReplies": new_replies + found, "processed": len(batch),
-            "remaining": len(fresh) - len(batch), "rechecked": rechecked, "followUpsChecked": follow_ups}
+            "remaining": len(fresh) - len(batch), "rechecked": rechecked, "followUpsChecked": follow_ups,
+            "since": start.isoformat(), "repliesWithoutLead": without_lead or 0}
+
+
+# Messages already looked at. A reply or bounce whose saved row was deleted since is not "known": it is read again.
+_KNOWN = """
+select n.gmail_message_id from inbox_seen n
+where n.gmail_message_id = any($1::text[])
+  and not (n.outcome in ('reply', 'bounce')
+           and not exists (select 1 from inbox_replies s where s.gmail_message_id = n.gmail_message_id))
+"""
 
 
 async def _recheck(pool: asyncpg.Pool, http: httpx.AsyncClient, token: str, own: str) -> tuple[int, int]:
@@ -282,23 +287,24 @@ async def _refresh_follow_ups(pool: asyncpg.Pool, http: httpx.AsyncClient, token
 
 @router.post("/label")
 async def label(body: LabelIn, user: User) -> dict:
-    """Shown instead of the agent's label from now on (the agent's own row is left as it is). Nothing is sent and the
-    agent does not see it: an unsubscribe still has to be handled in the mail agent."""
-    await _require_tables()
-    table = "replies" if body.source == "agent" else "inbox_replies"
+    """Shown instead of any automatic label from now on. Nothing is sent and the mail agent does not see it: an
+    unsubscribe still has to be handled in the mail agent. reply_labels.source is always 'inbox' (the column is from
+    when the agent's replies could be labelled too)."""
     try:
         pool = await data._pg()
-        if not await pool.fetchval(f"select exists (select 1 from {table} where id = $1)", body.replyId):  # noqa: S608
+        if not await pool.fetchval("select exists (select 1 from inbox_replies where id = $1)", body.replyId):
             raise HTTPException(404, "This reply no longer exists.")
         if body.label is None:
-            await pool.execute("delete from reply_labels where source = $1 and reply_id = $2", body.source, body.replyId)
+            await pool.execute("delete from reply_labels where source = 'inbox' and reply_id = $1", body.replyId)
         else:
             await pool.execute(
-                """insert into reply_labels (source, reply_id, label, labelled_by) values ($1, $2, $3, $4)
+                """insert into reply_labels (source, reply_id, label, labelled_by) values ('inbox', $1, $2, $3)
                    on conflict (source, reply_id) do update
                      set label = excluded.label, labelled_by = excluded.labelled_by, labelled_at = now()""",
-                body.source, body.replyId, body.label, user.get("email") or user["sub"],
+                body.replyId, body.label, user.get("email") or user["sub"],
             )  # fmt: skip
+    except asyncpg.UndefinedTableError as exc:
+        raise HTTPException(503, MIGRATION) from exc
     except asyncpg.PostgresError as exc:
         log.error("Could not save the label", exc_info=True)
         raise HTTPException(503, "Couldn't save the label: the database refused it. Try again.") from exc

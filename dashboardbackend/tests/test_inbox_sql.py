@@ -1,22 +1,24 @@
 """The inbox check and Positive Leads against a REAL Postgres, with Gmail faked. Nothing here touches Supabase or Google.
 
 The database gets a minimal copy of the mail agent's tables plus this project's own migrations 006 and 007, run from
-their files. Gmail is an httpx.MockTransport serving the made-up inbox below. Every lead and message is fake.
+their files. The agent only sends, so every reply here is one the backend read from Gmail. Gmail is an httpx.MockTransport serving the made-up inbox below. Every lead and message is fake.
 
     Lead          Our email                   In the inbox                                   Expected
     ------------  --------------------------  ---------------------------------------------  -----------------------------
-    Priya         <s-priya@us.test>, thread A  "Yes, let's talk" In-Reply-To our email; we     Needs review (not labelled),
+    Priya         <s-priya@us.test>, thread A  "Yes, let's talk" In-Reply-To our email; we     Positive (keyword score),
                                                answered later in thread A                     Responded, follow-up replied
-    Tom           thread T                     "Sounds interesting" in thread T, no headers   Needs review, Responded
-    Sam           thread S                     "Hello" from Sam's address, another thread     Needs review (sender only),
-                                                                                              NOT counted as Responded
+    Tom           thread T                     "Sounds interesting" in thread T, no headers   Needs review (score 0.65),
+                                                                                              Responded
+    Sam           thread S                     "Hello, who is this?" from Sam's address, in   Questions (scored like any
+                                                   another thread                                 reply), Responded
     Olga          <s-olga@us.test>             out-of-office (Auto-Submitted)                 not listed, not Responded
     Uma           <s-uma@us.test>              "Please remove me from your list"              Unsubscribe group
     Ben           <s-ben@us.test>              mailer-daemon notice quoting our Message-ID    Bounced
-    Ann           (agent reply: interested)    the agent stored it already (m-ann)            Positive, never fetched
-    Dana          <s-dana@us.test>             read by us, then also stored by the agent      shown once, as the agent's
+    Ann           <s-ann@us.test>              "Yes please"                                   Positive (keyword score)
+    Dana          <s-dana@us.test>             "What would it cost?"; a person labels it no   Questions, then Not interested
     Leo           (added only after the check)  "Count me in" In-Reply-To <s-leo@us.test>       not a reply at first; found by
-                                                                                              the next check once added
+                                                                                              the next check once added:
+                                                                                              Positive
     -             -                            our own mail, a stranger's mail                stored nowhere
 """
 
@@ -43,7 +45,7 @@ SEALED = "v1.w3raedxOR6B7GWiN.WFcNWIejCaNdUz-cYcmsLg.1xRAUJR4iK6iLFXIh0FF_Tv-VUb
 GOOGLE_SECRET = "js-test-client-secret"
 OWN = "us@us.test"
 
-# The agent's tables: only the columns the dashboard reads.
+# The agent's tables: only the columns the dashboard reads (it has no replies of its own: it only sends).
 SCHEMA = """
 create table companies (
   id uuid primary key default gen_random_uuid(), name text, domain text, source text, source_url text,
@@ -56,10 +58,6 @@ create table emails (
   id uuid primary key default gen_random_uuid(), contact_id uuid references contacts, mailbox text, subject text,
   body text, status text, sent_at timestamptz, reply_id uuid, message_id text, gmail_message_id text, gmail_thread_id text,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now());
-create table replies (
-  id uuid primary key default gen_random_uuid(), contact_id uuid references contacts, email_id uuid references emails,
-  received_at timestamptz not null, label text, review_note text, body text, message_id text,
-  gmail_message_id text unique, gmail_thread_id text);
 """
 
 # name: (our email's Message-ID, its Gmail thread, status)
@@ -151,15 +149,10 @@ async def _seed(dsn):
             contact = await conn.fetchval(
                 "insert into contacts (company_id, name, email) values ($1, $2, $3) returning id",
                 company, name, f"{name.lower()}@lead.test")
-            email = await conn.fetchval(
+            await conn.execute(
                 "insert into emails (contact_id, mailbox, subject, status, sent_at, message_id, gmail_thread_id)"
-                " values ($1, $2, 'Hello', $3, now() - interval '7 days', $4, $5) returning id",
+                " values ($1, $2, 'Hello', $3, now() - interval '7 days', $4, $5)",
                 contact, OWN, status, msgid, thread)
-            if name == "Ann":  # the agent read and labelled this one itself
-                await conn.execute(
-                    "insert into replies (contact_id, email_id, received_at, label, body, message_id, gmail_message_id)"
-                    " values ($1, $2, now() - interval '1 day', 'interested', 'Yes please', '<r-ann@lead.test>',"
-                    " 'm-ann')", contact, email)
     finally:
         await conn.close()
 
@@ -176,7 +169,6 @@ def env(tmp_path_factory):
             mp.setenv("GOOGLE_CLIENT_ID", "client-id")
             mp.setenv("GOOGLE_CLIENT_SECRET", GOOGLE_SECRET)
             mp.setattr(data, "_pool", None)  # a new pool, on this database
-            mp.setattr(data, "_inbox", {"ready": False, "checked": 0.0})
             mp.setattr(gmail, "client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(fake)))
             gmail.forget_token()
             with TestClient(app) as c:  # one event loop for every request, so the pool can be reused
@@ -214,18 +206,22 @@ def _by_name(positive):
 def test_the_check_reads_each_message_once(env):
     res = env["first"]
     assert res.status_code == 200, res.text
-    # m-ann is the agent's already: never fetched. The other nine are looked at, oldest first.
-    assert res.json() == {"checked": 11, "newReplies": 5, "processed": 10, "remaining": 0, "rechecked": 0,
-                          "followUpsChecked": 5}
-    assert "m-ann" not in env["gmail"].fetched and env["gmail"].fetched[0] == "m-priya"
+    # All eleven are looked at, oldest first.
+    body = res.json()
+    assert {k: v for k, v in body.items() if k != "since"} == {
+        "checked": 11, "newReplies": 6, "processed": 11, "remaining": 0, "rechecked": 0, "followUpsChecked": 6,
+        "repliesWithoutLead": 0}
+    assert body["since"].startswith(_db(env, "select min(sent_at)::date::text as d from emails")[0]["d"])
+    assert len(env["gmail"].fetched) == 11 and env["gmail"].fetched[0] == "m-priya"
     assert env["gmail"].queries[0].startswith("in:inbox after:")
     outcomes = {r["gmail_message_id"]: r["outcome"] for r in _db(env, "select * from inbox_seen")}
-    assert outcomes == {"m-leo": "not_reply", "m-own": "own", "m-stranger": "not_reply", "m-dana": "reply", "m-ben": "bounce",
-                        "m-uma": "reply", "m-olga": "reply", "m-sam": "reply", "m-tom": "reply", "m-priya": "reply"}
+    assert outcomes == {"m-leo": "not_reply", "m-own": "own", "m-stranger": "not_reply", "m-dana": "reply", "m-ann": "reply",
+                        "m-ben": "bounce", "m-uma": "reply", "m-olga": "reply", "m-sam": "reply", "m-tom": "reply",
+                        "m-priya": "reply"}
     stored = {r["gmail_message_id"]: (r["match_method"], r["auto_label"]) for r in _db(env, "select * from inbox_replies")}
     assert stored == {"m-priya": ("header", None), "m-tom": ("thread", None), "m-sam": ("sender", None),
                       "m-olga": ("header", "ooo"), "m-uma": ("header", None), "m-ben": ("header", "bounce"),
-                      "m-dana": ("header", None)}
+                      "m-dana": ("header", None), "m-ann": ("header", None)}
 
 
 def test_a_second_check_reads_nothing_new(env):
@@ -237,82 +233,77 @@ def test_a_second_check_reads_nothing_new(env):
 
 
 def test_positive_leads_groups(env):
-    # The agent stores Dana's mail after we did: from now on it is shown once, as the agent's (a question).
-    _db(env, "insert into replies (contact_id, email_id, received_at, label, body, gmail_message_id) "
-             "select contact_id, email_id, received_at, 'question', body, gmail_message_id from inbox_replies "
-             "where gmail_message_id = 'm-dana'")
     res = _get(env, "/leads/positive")
     groups = _by_name(res)
-    assert groups["positive"] == ["Ann"]
-    assert sorted(groups["review"]) == ["Priya", "Sam", "Tom"]
-    assert groups["questions"] == ["Dana"] and groups["unsubscribe"] == ["Uma"] and groups["notInterested"] == []
+    # Nobody has labelled anything yet: the keyword score sorts them (Uma's seems to ask to stop). Sam wrote from his
+    # address in a new thread: scored like any reply.
+    assert sorted(groups["positive"]) == ["Ann", "Priya"]
+    assert groups["review"] == ["Tom"]
+    assert sorted(groups["questions"]) == ["Dana", "Sam"]
+    assert groups["unsubscribe"] == ["Uma"] and groups["notInterested"] == []
     reasons = {r["name"]: r["reviewReason"] for r in res["review"]}
-    assert "sender's address only" in reasons["Sam"] and "not labelled yet" in reasons["Tom"]
-    review = {r["name"]: r for r in res["review"]}
-    assert review["Priya"]["followUp"] == "replied" and review["Tom"]["followUp"] == "unknown"
-    assert review["Priya"]["replySource"] == "inbox" and review["Priya"]["source"] == "search"  # the lead's source kept
-    assert review["Priya"]["preview"] == "Yes, let's talk next week."  # quoted mail left out
-    # Responded: Priya, Tom, Uma, Ann, Dana. Not Sam (sender only), not Olga (out of office), not Ben (bounced).
-    assert res["repliedLeads"] == 5
+    assert reasons == {"Tom": "Score 0.65: no clear yes or no"}
+    positive = {r["name"]: r for r in res["positive"]}
+    assert positive["Priya"]["followUp"] == "replied" and {r["followUp"] for r in res["review"]} == {"waiting"}
+    assert positive["Priya"]["source"] == "search"  # the lead's source kept
+    # Scored on what she wrote: our quoted email ("On Mon, Us wrote: > Hi") is left out.
+    assert positive["Priya"]["preview"] == "Yes, let's talk next week." and positive["Priya"]["score"] == 0.75
+    # Responded: Priya, Tom, Sam, Uma, Ann, Dana. Not Olga (out of office), not Ben (bounced).
+    assert res["repliedLeads"] == 6
 
 
 def test_lead_statuses(env):
     status = {r["name"]: r["status"] for r in _get(env, "/leads?limit=50")["items"]}
-    assert status == {"Priya": "Responded", "Tom": "Responded", "Sam": "Sent", "Olga": "Sent", "Uma": "Responded",
+    assert status == {"Priya": "Responded", "Tom": "Responded", "Sam": "Responded", "Olga": "Sent", "Uma": "Responded",
                       "Ben": "Bounced", "Ann": "Responded", "Dana": "Responded"}
 
 
-def test_a_lead_read_from_gmail_opens_its_reply_in_history(env):
-    priya = next(r for r in _get(env, "/leads/positive")["review"] if r["name"] == "Priya")
+def test_a_lead_opens_its_reply(env):
+    priya = next(r for r in _get(env, "/leads/positive")["positive"] if r["name"] == "Priya")
     lead = _get(env, f"/leads/{priya['id']}")
     assert lead["conversation"] == {"type": "reply", "id": priya["replyId"]}
     sent = _db(env, "select e.id from emails e join contacts c on c.id = e.contact_id where c.name = 'Priya'")[0]["id"]
     reply = _get(env, f"/emails/replies/{priya['replyId']}")
-    assert reply["replySource"] == "inbox" and reply["senderEmail"] == "priya@lead.test"
+    assert reply["senderEmail"] == "priya@lead.test" and reply["label"] is None
     assert reply["originalEmail"]["id"] == str(sent)  # the email of ours it answers
-    assert lead["replySource"] == "inbox" and lead["replyGroup"] == "review"
+    assert lead["replyGroup"] == "positive" and lead["labelledBy"] is None and lead["score"] == 0.75
     assert lead["latestReply"]["text"] == "Yes, let's talk next week."
 
 
 def test_a_persons_label_moves_the_lead_and_can_be_undone(env):
     c = env["client"]
     tom = next(r for r in _get(env, "/leads/positive")["review"] if r["name"] == "Tom")
-    body = {"source": "inbox", "replyId": tom["replyId"], "label": "interested"}
+    body = {"replyId": tom["replyId"], "label": "interested"}
     assert c.post("/inbox/label", headers=_auth(), json=body).json() == {"ok": True}
     res = _get(env, "/leads/positive")
-    assert sorted(_by_name(res)["positive"]) == ["Ann", "Tom"]
+    assert sorted(_by_name(res)["positive"]) == ["Ann", "Priya", "Tom"]
     assert next(r for r in res["positive"] if r["name"] == "Tom")["labelledByPerson"] is True
     assert _db(env, "select labelled_by from reply_labels")[0]["labelled_by"] == "ana@team.test"
     assert c.post("/inbox/label", headers=_auth(), json={**body, "label": None}).status_code == 200
     assert "Tom" in _by_name(_get(env, "/leads/positive"))["review"]
 
 
-def test_a_persons_label_wins_over_the_agents(env):
+def test_a_labelled_reply_shows_who_labelled_it(env):
     c = env["client"]
-    ann = _get(env, "/leads/positive")["positive"][0]
-    body = {"source": "agent", "replyId": ann["replyId"], "label": "not_interested"}
+    dana = next(r for r in _get(env, "/leads/positive")["questions"] if r["name"] == "Dana")
+    body = {"replyId": dana["replyId"], "label": "not_interested"}
     assert c.post("/inbox/label", headers=_auth(), json=body).status_code == 200
-    res = _get(env, "/leads/positive")
-    assert _by_name(res)["notInterested"] == ["Ann"] and "Ann" not in _by_name(res)["positive"]
-    lead = _get(env, f"/leads/{ann['id']}")
-    assert lead["replyLabel"] == "not_interested" and lead["originalLabel"] == "interested"
+    assert _by_name(_get(env, "/leads/positive"))["notInterested"] == ["Dana"]
+    lead = _get(env, f"/leads/{dana['id']}")
+    assert lead["replyLabel"] == "not_interested" and lead["replyGroup"] == "notInterested"
     assert lead["labelledBy"]["by"] == "ana@team.test"
-    # The agent's own row is left as it was.
-    assert _db(env, "select label from replies where gmail_message_id = 'm-ann'")[0]["label"] == "interested"
+    assert _get(env, f"/emails/replies/{dana['replyId']}")["label"] == "not_interested"
     c.post("/inbox/label", headers=_auth(), json={**body, "label": None})
 
 
 def test_label_for_a_reply_that_does_not_exist(env):
-    body = {"source": "inbox", "replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d", "label": "interested"}
+    body = {"replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d", "label": "interested"}
     res = env["client"].post("/inbox/label", headers=_auth(), json=body)
     assert res.status_code == 404
 
 
 def test_nothing_was_written_to_the_agents_tables(env):
-    # emails untouched, no email_events table even exists here (any write to it would have failed the check), and
-    # the only replies rows are the ones this test inserted on the agent's behalf.
-    assert [r["gmail_message_id"] for r in _db(env, "select gmail_message_id from replies order by 1")] == [
-        "m-ann", "m-dana"]
+    # emails untouched; no replies or email_events table even exists here (any write to one would have failed).
     assert _db(env, "select count(*) as n from emails where status <> 'sent'")[0]["n"] == 0
 
 
@@ -331,25 +322,9 @@ def test_a_reply_that_came_before_its_lead_is_found_later(env):
     assert res["rechecked"] == 2 and res["newReplies"] == 1 and res["processed"] == 0
     outcomes = {r["gmail_message_id"]: r["outcome"] for r in _db(env, "select * from inbox_seen")}
     assert outcomes["m-leo"] == "reply" and outcomes["m-stranger"] == "not_reply"
-    assert "Leo" in _by_name(_get(env, "/leads/positive"))["review"]
+    assert "Leo" in _by_name(_get(env, "/leads/positive"))["positive"]  # "Count me in."
     # Nothing new was recorded since: the stranger's mail is not looked at again on the next check.
     assert env["client"].post("/inbox/check", headers=_auth()).json()["rechecked"] == 0
-
-
-def test_history_lists_both_kinds_of_reply_once(env):
-    res = _get(env, "/emails/replies?limit=200")
-    by_source = {}
-    for r in res["items"]:
-        by_source.setdefault(r["replySource"], set()).add(r["senderName"])
-    # Dana's mail is in both places: listed once, as the agent's. Our own and the stranger's mail: nowhere.
-    assert by_source == {"inbox": {"Priya", "Tom", "Sam", "Olga", "Uma", "Ben", "Leo"}, "agent": {"Ann", "Dana"}}
-    assert res["total"] == 9 and sorted(r["number"] for r in res["items"]) == list(range(1, 10))
-    # Not labelled yet: the replies read from Gmail that no person or rule has labelled.
-    unlabelled = {r["senderName"] for r in _get(env, "/emails/replies?label=unclassified&limit=200")["items"]}
-    assert unlabelled == {"Priya", "Tom", "Sam", "Uma", "Leo"}
-    # From people: everything except the out-of-office and the bounce.
-    human = {r["senderName"] for r in _get(env, "/emails/replies?label=human&limit=200")["items"]}
-    assert human == {"Priya", "Tom", "Sam", "Uma", "Leo", "Ann", "Dana"}
 
 
 def test_a_sent_email_links_to_the_reply_read_from_gmail(env):
@@ -358,3 +333,24 @@ def test_a_sent_email_links_to_the_reply_read_from_gmail(env):
     assert sent["priya@lead.test"]["replyId"] == str(priya_reply)
     assert sent["sam@lead.test"]["replyId"] is None  # matched by sender only: not proof it answers this email
     assert _get(env, f"/emails/sent/{sent['priya@lead.test']['id']}")["replyId"] == str(priya_reply)
+
+
+def test_a_reply_whose_saved_copy_was_deleted_is_read_again(env):
+    # e.g. a test-lead cleanup deleted the saved reply but not the "already looked at" record: it must come back.
+    _db(env, "delete from inbox_replies where gmail_message_id = 'm-priya'")
+    assert "Priya" not in _by_name(_get(env, "/leads/positive"))["positive"]
+    before = len(env["gmail"].fetched)
+    res = env["client"].post("/inbox/check", headers=_auth()).json()
+    assert res["processed"] == 1 and res["newReplies"] == 1 and env["gmail"].fetched[before:] == ["m-priya"]
+    assert "Priya" in _by_name(_get(env, "/leads/positive"))["positive"]
+    # Read once more only while it is missing: the next check fetches nothing.
+    assert env["client"].post("/inbox/check", headers=_auth()).json()["processed"] == 0
+
+
+def test_the_check_counts_saved_replies_whose_lead_is_gone(env):
+    _db(env, """insert into inbox_replies (gmail_message_id, contact_id, match_method, from_email, body, received_at)
+                values ('m-gone', gen_random_uuid(), 'header', 'gone@lead.test', 'Yes!', now())""")
+    _db(env, "insert into inbox_seen (gmail_message_id, outcome) values ('m-gone', 'reply')")
+    res = env["client"].post("/inbox/check", headers=_auth()).json()
+    assert res["repliesWithoutLead"] == 1  # not on Positive Leads (no lead to list it under), but reported
+    _db(env, "delete from inbox_replies where gmail_message_id = 'm-gone'")

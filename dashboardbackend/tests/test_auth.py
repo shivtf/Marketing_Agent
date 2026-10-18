@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app import auth
 from app.main import app
 
+_FUNCTIONS = ("dashboard_account_state(", "dashboard_claim(", "dashboard_user_role(", "dashboard_end_sessions(")
 SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
 client = TestClient(app)
 
@@ -108,13 +109,23 @@ def presence(monkeypatch):
     state = {"alive": True, "removed": False, "holder": None, "fail": False, "no_table": False, "released": []}
 
     class Pool:
+        """A database without migrations/009: the narrow functions do not exist, the queries go to the tables."""
+
+        def _no_function(self, sql):
+            if state.get("functions") is None and any(f in sql for f in _FUNCTIONS):
+                raise asyncpg.UndefinedFunctionError(f"function does not exist: {sql[:40]}")
+
         async def fetchrow(self, sql, *_args):
-            assert "from auth.users u" in sql
+            self._no_function(sql)
+            state.setdefault("sql", []).append(sql)
+            assert "from auth.users u" in sql or "dashboard_account_state(" in sql
             return {"session_alive": state["alive"], "removed": state["removed"]}
 
         async def fetchval(self, sql, *args):
             if state["no_table"]:
                 raise asyncpg.UndefinedTableError('relation "dashboard_presence" does not exist')
+            self._no_function(sql)
+            state.setdefault("sql", []).append(sql)
             user_id, session_id = args
             if state["holder"] in (None, session_id):
                 state["holder"] = session_id
@@ -206,3 +217,18 @@ def test_a_failed_check_is_never_remembered(presence):
     presence["fail"] = False
     presence["removed"] = True
     assert _get(token).status_code == 401  # checked again, not let through from memory
+
+
+
+def test_a_change_is_refused_when_the_sign_in_check_cannot_run(presence):
+    presence["fail"] = True
+    headers = {"Authorization": f"Bearer {_token(session_id=SESSION)}"}
+    assert client.post("/auth/signout", headers=headers).status_code == 503
+
+
+def test_the_narrow_functions_are_used_when_migration_009_is_applied(presence):
+    presence["functions"] = True
+    assert _get(_token(session_id=SESSION)).status_code == 200
+    assert any("dashboard_account_state(" in s for s in presence["sql"])
+    assert any("dashboard_claim(" in s for s in presence["sql"])
+    assert not any("from auth.users u" in s for s in presence["sql"])

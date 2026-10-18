@@ -32,6 +32,7 @@ export const POST = handle(async (request) => {
     try {
       await gateway(`/v1/campaigns/${data.id}/requests`, {
         method: 'POST',
+        user,
         body: { request_type: 'interpret', payload: {}, requested_by: requestedBy(user), idempotency_key: `interpret-${data.id}` },
       });
     } catch (e) {

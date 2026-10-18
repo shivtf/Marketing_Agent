@@ -73,3 +73,16 @@ ruff check .        # lint (the same check CI runs on every push)
 
 Tokens are verified against the project's JWKS (`/auth/v1/.well-known/jwks.json`); set `SUPABASE_JWT_SECRET`
 only for legacy HS256 projects. The dashboard sends `Authorization: Bearer <session.access_token>`.
+
+## Database login
+
+Use the limited `dashboard_backend` login, not the database owner: run `migrations/009_dashboard_backend_role.sql` once
+in the Supabase SQL editor (after 006 and 007), set its password (`alter role dashboard_backend with login password
+'...'`), and put the pooler URL with that user in `DATABASE_URL` (here and on Render). It can read the lead tables
+(`companies`, `contacts`, `emails`, `content_posts`) and the saved Gmail connection, keep its own tables
+(`dashboard_presence`, `inbox_replies`, `inbox_seen`, `reply_labels`), call `submit_manual_contact()`, and reach Supabase
+Auth only through four narrow functions in that file. Until 009 is applied the code falls back to the owner's direct
+queries, so the order of deploying does not matter.
+
+Every request is refused with 503 while the sign-in check cannot reach the database (never let through unchecked), so a
+removed account or a second sign-in can't slip in during an outage.

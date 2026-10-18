@@ -16,7 +16,7 @@ export const POST = handle(async (request) => {
   if (state === 'running' && user.app_metadata?.role !== 'admin') return fail('Only admins can resume the agent.', 403);
   const doing = state === 'paused' ? 'pause' : 'resume';
   try {
-    await gateway('/v1/ca/state', { method: 'POST', body: { state, requested_by: requestedBy(user) } });
+    await gateway('/v1/ca/state', { method: 'POST', user, body: { state, requested_by: requestedBy(user) } });
     return Response.json(await caStatus());
   } catch (err) {
     return gatewayError(err, doing);

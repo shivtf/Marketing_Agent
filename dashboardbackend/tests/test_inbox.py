@@ -8,6 +8,7 @@ import base64
 import secrets
 import time
 
+import asyncpg
 import httpx
 import jwt
 import pytest
@@ -32,18 +33,6 @@ def _env(monkeypatch):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setenv("GOOGLE_CLIENT_SECRET", JS_SECRET)
     gmail.forget_token()
-
-
-@pytest.fixture
-def tables(monkeypatch):
-    """Whether migration 007 "exists" (no database is ever touched here)."""
-    state = {"ready": True}
-
-    async def ready():
-        return state["ready"]
-
-    monkeypatch.setattr(data, "inbox_ready", ready)
-    return state
 
 
 def _auth():
@@ -236,19 +225,27 @@ def test_inbox_routes_need_login():
     assert client.post("/inbox/label", json={}).status_code == 401
 
 
-def test_inbox_routes_before_the_migration(tables):
-    tables["ready"] = False
-    for res in (client.post("/inbox/check", headers=_auth()),
-                client.post("/inbox/label", headers=_auth(), json={
-                    "source": "inbox", "replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d", "label": "interested"})):
-        assert res.status_code == 503 and "007_inbox_replies.sql" in res.json()["detail"]
+def test_inbox_routes_before_the_migration(monkeypatch):
+    class NoTables:  # a database where neither migration 006 nor 007 has been run
+        async def _missing(self, *_):
+            raise asyncpg.UndefinedTableError("relation does not exist")
+
+        fetch = fetchrow = fetchval = execute = _missing
+
+    async def pg():
+        return NoTables()
+
+    monkeypatch.setattr(data, "_pg", pg)
+    label = client.post("/inbox/label", headers=_auth(), json={
+        "replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d", "label": "interested"})
+    assert label.status_code == 503 and "007_inbox_replies.sql" in label.json()["detail"]
+    assert client.post("/inbox/check", headers=_auth()).status_code == 503  # no gmail_connection: not connected
 
 
 @pytest.mark.parametrize("body", [
-    {"source": "inbox", "replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d", "label": "maybe"},
-    {"source": "other", "replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d", "label": "interested"},
-    {"source": "inbox", "replyId": "not-a-uuid", "label": "interested"},
-    {"source": "inbox", "replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d"},  # label missing (null is allowed)
+    {"replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d", "label": "maybe"},
+    {"replyId": "not-a-uuid", "label": "interested"},
+    {"replyId": "0b6b0f90-3f0e-4b8a-9c6d-2e1f0a9b8c7d"},  # label missing (null is allowed)
 ])
-def test_label_checks_its_input(tables, body):
+def test_label_checks_its_input(body):
     assert client.post("/inbox/label", headers=_auth(), json=body).status_code == 422

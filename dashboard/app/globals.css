@@ -742,6 +742,10 @@ a.row-icon:hover { background: var(--accent-soft); color: var(--accent); }
 .ca-quote { margin: 0; padding-left: 10px; border-left: 3px solid var(--border-strong); color: var(--muted); font-size: 13px; font-style: italic; overflow-wrap: anywhere; }
 .ca-suggestion { display: grid; gap: 4px; }
 .ca-source { display: block; color: var(--accent); overflow-wrap: anywhere; }
+.ca-brief-part { display: grid; gap: 6px; margin-top: 4px; }
+.ca-brief-item { display: grid; gap: 2px; }
+.ca-brief-sources { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12.5px; }
+.ca-brief-source { color: var(--accent); }
 .ca-actions, .ca-decide { display: flex; gap: 8px; flex-wrap: wrap; }
 .ca-levels { display: grid; gap: 10px; }
 .ca-level { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; display: grid; gap: 6px; }

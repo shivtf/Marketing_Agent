@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { Badge, StatusBadge, SourceCell, ExtLink, MetaRow } from './ui';
-import { pad, fmtDate, toneOf, REPLY_LABELS, replyLabel } from '@/core/format';
+import { pad, fmtDate, toneOf, REPLY_LABELS, replyLabel, scoreTone, scoreHitsText } from '@/core/format';
 import { visiblePositive } from './DataProvider';
 import * as api from '@/core/api';
 
@@ -15,9 +15,8 @@ const ActionButton = ({ onClick, icon, children }) => (
   <button className="btn outline block" onClick={onClick}><Icon name={icon} /> {children}</button>
 );
 
-// "Label this reply": a person's label for the reply the lead is judged on. It is shown instead of the agent's (or
-// fills in a reply read from Gmail), the lead moves to that group, and the labels become the reviewed examples a
-// future classifier can learn from. The mail agent does not see it.
+// "Label this reply": a person's label for the reply the lead is judged on. The lead moves to that group, and the
+// labels become the reviewed examples a future classifier can learn from. The mail agent does not see it.
 function LabelReply({ d }) {
   const qc = useQueryClient();
   const [label, setLabel] = useState(d.replyLabel || '');
@@ -25,7 +24,7 @@ function LabelReply({ d }) {
   const save = async (next) => {
     setState({ busy: true, error: null });
     try {
-      await api.labelReply({ source: d.replySource, replyId: d.latestReply.id, label: next });
+      await api.labelReply({ replyId: d.latestReply.id, label: next });
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['section', 'positive'] }),
         qc.invalidateQueries({ queryKey: ['detail'] }),
@@ -52,7 +51,7 @@ function LabelReply({ d }) {
       </div>
       <div className="muted small">
         {mine
-          ? `Labelled by ${mine.by || 'a person'} on ${fmtDate(mine.at, 'date')}.${d.originalLabel ? ` The agent said: ${replyLabel(d.originalLabel)}.` : ''}`
+          ? `Labelled by ${mine.by || 'a person'} on ${fmtDate(mine.at, 'date')}.`
           : 'Read the reply below, then choose what it means.'}
       </div>
       {state.error && <div className="confirm-error" role="alert">{state.error}</div>}
@@ -117,6 +116,15 @@ export function getKinds(goto) {
         <MetaRow key="label" k="Latest Reply">
           {text ? <Badge text={text} tone={toneOf(text)} /> : <Badge text="Not labelled" tone="gray" />}
         </MetaRow>,
+        ...(d.score != null ? [
+          <MetaRow key="score" k="Keyword Score">
+            <Badge text={d.score.toFixed(2)} tone={scoreTone(d.score)} />
+            <div className="muted small">
+              {d.scoreHits.length ? `Matched: ${scoreHitsText(d.scoreHits)}.` : 'No keywords matched.'}
+              {d.labelledBy && ' A person’s label is used instead.'}
+            </div>
+          </MetaRow>,
+        ] : []),
         ...(d.reviewReason && d.replyGroup !== 'unsubscribe' ? [
           <MetaRow key="review" k="Needs Review">
             <Badge text="Needs review" tone={toneOf('Needs review')} /> <span className="muted small">{d.reviewReason}</span>
@@ -128,11 +136,6 @@ export function getKinds(goto) {
               Unsubscribe requested — action required in the mail agent to stop future emails.
               {d.reviewReason && <span className="muted"> ({d.reviewReason}.)</span>}
             </span>
-          </MetaRow>,
-        ] : []),
-        ...(d.replySource === 'inbox' ? [
-          <MetaRow key="from" k="Reply Found">
-            <span className="small">Read from Gmail by the dashboard. The mail agent has not seen it, so its follow-ups are not stopped.</span>
           </MetaRow>,
         ] : []),
         ...(d.latestReply ? [
@@ -193,11 +196,6 @@ export function getKinds(goto) {
           <MetaRow key="subj" k="Subject">{d.subject}</MetaRow>,
           <MetaRow key="recv" k="Date/Time Received">{fmtDate(d.receivedAt)}</MetaRow>,
           <MetaRow key="label" k="Reply Type"><Badge text={replyLabel(d.label)} tone={toneOf(replyLabel(d.label))} /></MetaRow>,
-          ...(d.replySource === 'inbox' ? [
-            <MetaRow key="found" k="Reply Found">
-              <span className="small">Read from Gmail by the dashboard. The mail agent has not seen it; label it on Positive Leads.</span>
-            </MetaRow>,
-          ] : []),
           <LeadRow key="lead" d={d} />,
         ],
         // A reply may not be linked to one of our emails (e.g. it arrived on a new thread).
