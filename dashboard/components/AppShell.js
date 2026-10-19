@@ -175,7 +175,9 @@ export function AppShell({ children }) {
         await getMe();
       } catch (err) {
         if (cancelled) return;
-        if (err.status === 0) { setState('offline'); return; }
+        // Backend unreachable, or it couldn't check the sign-in (503: it refuses rather than guess): stay signed in
+        // and offer Retry.
+        if (err.status === 0 || err.status >= 500) { setState('offline'); return; }
         // Backend rejected the session: end it in this browser only (a global sign-out would also end the
         // session of whoever is using the account on another device).
         await auth.endSession(err.message);

@@ -1,14 +1,20 @@
 // Small formatting helpers shared by every page and the drawer.
-// Reply labels from the reply classifier (replies.label), as shown in the dashboard.
+// Reply labels (a person's, or out-of-office / bounce set by the backend's rules), as shown in the dashboard.
 export const REPLY_LABELS = {
   interested: 'Interested', question: 'Question', not_interested: 'Not interested',
   ooo: 'Out of office', bounce: 'Bounced', unsubscribe: 'Unsubscribed',
 };
 
-// A reply's label as shown, including replies the classifier hasn't labelled yet.
-export const replyLabel = (label) => (label ? REPLY_LABELS[label] || label : 'Not classified');
+// A reply's label as shown, including replies nobody has labelled yet.
+export const replyLabel = (label) => (label ? REPLY_LABELS[label] || label : 'Not labelled');
 
 export const pad = (n) => String(n).padStart(3, '0');
+
+// The keyword score of a reply (backend app/reply_rules.py): 0.70 or more is Positive, below 0.40 Not interested.
+export const scoreTone = (score) => (score >= 0.7 ? 'green' : score < 0.4 ? 'red' : 'amber');
+// [{ phrase, weight }] -> "“let's talk” +0.25, “not now” −0.20"
+export const scoreHitsText = (hits) => hits
+  .map((h) => `“${h.phrase}” ${h.weight > 0 ? '+' : '−'}${Math.abs(h.weight).toFixed(2)}`).join(', ');
 
 // In the viewer's own time zone (the backend sends UTC).
 // mode: 'full' "Apr 20, 2024, 10:15 AM" | 'table' "Apr 20, 2024 10:15 AM" | 'date' "Apr 20, 2024"
@@ -38,7 +44,7 @@ export function fmtDay(ymd, mode = 'day') {
 // Whole days between an ISO time and now (0 = less than a day ago).
 export const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0);
 
-export const toneOf = (t) => ({ Question: 'blue', 'Out of office': 'gray', 'Not classified': 'gray', Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'gray', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', Planned: 'blue', Written: 'amber', Missed: 'red', Cancelled: 'gray', Sent: 'blue', 'Not Sent': 'gray', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red', Bounced: 'red' }[t] || 'gray');
+export const toneOf = (t) => ({ Question: 'blue', 'Out of office': 'gray', 'Not labelled': 'gray', Running: 'green', Delivered: 'green', Replied: 'green', Posted: 'green', Responded: 'green', Interested: 'green', Paused: 'amber', Stopped: 'gray', Offline: 'red', 'Needs review': 'amber', Awaiting: 'amber', Planned: 'blue', Written: 'amber', Missed: 'red', Cancelled: 'gray', Sent: 'blue', 'Not Sent': 'gray', 'No Contact': 'amber', 'Not Posted': 'amber', Failed: 'red', 'Not interested': 'red', Unsubscribed: 'red', Bounced: 'red' }[t] || 'gray');
 
 // Where the agent found a lead (backend /leads `source`): web search or one of its job-board feeds
 // (Marketing-AI-Agent config/sources.yaml).

@@ -1,6 +1,6 @@
 'use client';
-// The Gmail inbox tab of Replies Received (History page). Read only: the connected inbox's emails, searchable with
-// Gmail's own search, either all of the inbox or only mail from the people the agent emailed. An email opens as plain
+// Replies Received on the History page. Read only: the connected inbox's emails, searchable with Gmail's own search:
+// all of the inbox for admins, only mail from the people the agent emailed for employees. An email opens as plain
 // text in a dialog. Admins connect and disconnect the inbox here. Data: app/api/gmail (core/gmail.js).
 import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +13,6 @@ import { getSession, isAdmin } from '@/core/auth';
 import { disconnectGmail, getGmailMessage, getGmailStatus, listGmail, startGmailConnect } from '@/core/gmail';
 import { fmtDate } from '@/core/format';
 
-const VIEWS = [['inbox', 'Inbox'], ['leads', 'From leads']];
 const REFRESH_MS = 60_000;
 
 // /history?gmail=<result> after Google's consent screen (app/api/gmail/callback) -> what to tell the admin.
@@ -31,7 +30,7 @@ const RESULTS = {
 };
 
 function useIsAdmin() {
-  const [admin, setAdmin] = useState(false);
+  const [admin, setAdmin] = useState(null); // null until the session is read
   useEffect(() => { getSession().then((s) => setAdmin(isAdmin(s))); }, []);
   return admin;
 }
@@ -45,18 +44,19 @@ export default function GmailInbox() {
   const [confirmDialog, confirm] = useConfirm();
   const [note, setNote] = useState(null); // { text, tone }
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState('inbox');
   const [q, setQ] = useState('');
   const [pages, setPages] = useState(['']); // page tokens so far; '' = the first page
   const [open, setOpen] = useState(null); // index of the email shown in the dialog
 
   const statusQ = useQuery({ queryKey: ['gmail', 'status'], queryFn: getGmailStatus, staleTime: 60_000 });
   const connected = !!statusQ.data?.connected;
+  // Admins see the whole inbox; employees only mail from the people the agent emailed (the server enforces it too).
+  const view = admin ? 'inbox' : 'leads';
   const pageToken = pages[pages.length - 1];
   const listQ = useQuery({
     queryKey: ['gmail', 'list', view, q, pageToken],
     queryFn: () => listGmail({ view, q, pageToken }),
-    enabled: connected,
+    enabled: connected && admin !== null,
     placeholderData: keepPreviousData,
     staleTime: 30_000,
     // New mail shows by itself: the first page is read again every minute while the browser tab is on screen. Not on
@@ -81,10 +81,9 @@ export default function GmailInbox() {
     return () => clearTimeout(t);
   }, [note]);
 
-  // A new view or search starts again from the first page.
-  const choose = (changes) => {
-    if ('view' in changes) setView(changes.view);
-    if ('q' in changes) setQ(changes.q);
+  // A new search starts again from the first page.
+  const search = (text) => {
+    setQ(text);
     setPages(['']);
   };
 
@@ -219,14 +218,7 @@ export default function GmailInbox() {
       </div>
       {message}
       <div className="history-tools">
-        <SearchBox value={q} onSearch={(text) => choose({ q: text })} placeholder="Search Gmail (e.g. from:name, subject:demo)" maxLength={200} />
-        <div className="chip-group" role="group" aria-label="Which emails">
-          {VIEWS.map(([k, label]) => (
-            <button key={k} type="button" className={`chip${view === k ? ' active' : ''}`} aria-pressed={view === k} onClick={() => choose({ view: k })}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <SearchBox value={q} onSearch={search} placeholder="Search Gmail (e.g. from:name, subject:demo)" maxLength={200} />
       </div>
       {listQ.isError && data && <div className="notice">{listQ.error.message}</div>}
       {body}

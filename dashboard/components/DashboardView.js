@@ -65,7 +65,8 @@ const KPIS = [
 
 function StatRow({ stats }) {
   const { status, data, reload } = stats;
-  const sent = data ? data.total - data.notSent : 0; // every lead we emailed: sent, responded or bounced
+  // Every lead we emailed: sent, responded or bounced (not the ones not emailed yet, nor companies with no contact).
+  const sent = data ? data.total - data.notSent - (data.noContact ?? 0) : 0;
   return (
     <div className="kpis">
       {KPIS.map((k) => (
@@ -89,7 +90,7 @@ function StatRow({ stats }) {
 }
 
 // ---------- Lead Pipeline: where every lead stands ----------
-// Every lead is in exactly one of Not Sent, Awaiting, Responded and Bounced, so Awaiting + Responded + Bounced add up
+// Every lead is in exactly one of No Contact, Not Sent, Awaiting, Responded and Bounced, so Awaiting + Responded + Bounced add up
 // to Emailed. Emailed is a share of all leads; the three after it are shares of emailed leads, like the stat cards.
 function Pipeline({ stats }) {
   const { status, data, reload } = stats;
@@ -97,9 +98,11 @@ function Pipeline({ stats }) {
   if (status === 'loading') body = <Skeleton rows={3} />;
   else if (status === 'error') body = <ErrorBox what="the lead pipeline" onRetry={reload} />;
   else {
-    const emailed = data.total - data.notSent;
+    const noContact = data.noContact ?? 0;
+    const emailed = data.total - data.notSent - noContact;
     const stages = [
-      { label: 'Found', icon: 'building', tone: 'blue', n: data.total, note: `${data.notSent} not emailed yet` },
+      { label: 'Found', icon: 'building', tone: 'blue', n: data.total,
+        note: noContact ? `${data.notSent} to email · ${noContact} no contact` : `${data.notSent} not emailed yet` },
       { label: 'Emailed', icon: 'send', tone: 'green', n: emailed, of: data.total, ofWhat: 'all leads' },
       { label: 'Awaiting', icon: 'mail', tone: 'amber', n: data.awaiting, of: emailed, ofWhat: 'emailed leads' },
       { label: 'Responded', icon: 'reply', tone: 'lavender', n: data.responded, of: emailed, ofWhat: 'emailed leads' },

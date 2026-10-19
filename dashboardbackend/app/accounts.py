@@ -14,7 +14,7 @@ from typing import Annotated
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth import call_or_sql, current_admin, current_user
+from app.auth import current_admin, current_user, forget_checks
 from app.data import _pg
 
 log = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def _count(status: str) -> int:
 
 
 async def _end(sql: str, *args, fn: str | None = None) -> int:
-    """`fn`: the same through the narrow function of migrations/007 (returns the count), used when it exists."""
+    """`fn`: the same through the narrow function of migrations/009 (returns the count), used when it exists."""
     try:
         pool = await _pg()
         if fn is None:
@@ -60,6 +60,7 @@ async def end_user_sessions(user_id: str, admin: Admin) -> dict:
         "delete from auth.sessions where user_id = $1::uuid", uid,
         fn="select public.dashboard_end_sessions($1::uuid)",
     )
+    forget_checks(uid)  # their next request on this server is checked again (and refused) at once
     # The account is free for a new sign-in at once (the one-sign-in rule would allow it anyway: no session is left).
     await _end("delete from public.dashboard_presence where user_id = $1::uuid", uid)
     return {"ended": ended}

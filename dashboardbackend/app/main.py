@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.accounts import router as accounts_router
 from app.auth import current_user, release
 from app.data import router as data_router
+from app.inbox import router as inbox_router
 from app.needs_contact import router as needs_contact_router
 
 load_dotenv()  # reads dashboardbackend/.env when started from that folder
@@ -30,6 +31,7 @@ app.add_middleware(
 app.include_router(data_router)
 app.include_router(accounts_router)
 app.include_router(needs_contact_router)
+app.include_router(inbox_router)
 
 
 @app.get("/health")

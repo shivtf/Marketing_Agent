@@ -36,7 +36,7 @@ def db(monkeypatch):
 
     class Pool:
         async def fetchval(self, sql, *_):
-            if any(f in sql for f in _FUNCTIONS):  # a database without migrations/007
+            if any(f in sql for f in _FUNCTIONS):  # a database without migrations/009
                 raise asyncpg.UndefinedFunctionError(f"function does not exist: {sql[:40]}")
             assert "raw_app_meta_data->>'role'" in sql
             return state["role"]

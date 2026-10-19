@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --test core/server/*.test.mjs"
+    "test": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --test core/server/*.test.mjs",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
@@ -14,5 +15,10 @@
     "next": "^15.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.27"
   }
 }

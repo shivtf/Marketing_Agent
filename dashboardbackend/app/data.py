@@ -3,9 +3,12 @@
 Reads the tables the lead / outreach / content services write to (supabase/migrations/0002_core.sql)
 and returns the same shapes the dashboard's mock data used (eval/dashboard/core/data.js), so the
 frontend only has to swap its mock bodies for apiFetch() calls. Every route requires a Supabase login.
+The mail agent only sends: every reply is one this backend read from Gmail (app/inbox.py, table inbox_replies), with
+the label a person gave it (reply_labels). Both tables come from migrations/007_inbox_replies.sql.
 """
 
 import asyncio
+import logging
 import os
 import re
 import uuid
@@ -15,15 +18,20 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import current_user
+from app.reply_rules import POSITIVE_AT, REVIEW_AT, mentions_unsubscribe, score_reply
 
+log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
 
 _pool: asyncpg.Pool | None = None
 _pool_lock = asyncio.Lock()  # the dashboard sends several requests at once; they must share one pool
 
-# Contacts get a stable 1-based number (oldest first) so the UI can show "#12".
+# A lead is a contact of a company, or a company still in the pipeline that has no contact yet ('No Contact': qualified,
+# or waiting for a person on Needs Contact). Companies the agent only discovered or rejected are not leads. Every lead
+# gets a 1-based number (oldest first) so the UI can show "#12". A company's id is its own; a contact's is the contact's.
 _LEADS = """
-select c.id, row_number() over (order by c.collected_at, c.id) as number,
+select x.*, row_number() over (order by x.added_at, x.id) as number from (
+select c.id,
        coalesce(c.name, c.email, co.name) as name, c.role as title, co.name as company,
        'https://' || co.domain as company_url, co.source_url as profile_url, c.email,
        -- What the company does: the agent's project summary for it, else its industry.
@@ -31,13 +39,15 @@ select c.id, row_number() over (order by c.collected_at, c.id) as number,
        -- Where the agent found the lead: 'leadgen:search' -> 'search', 'leadgen:feed:hn_hiring' -> 'hn_hiring'.
        coalesce(nullif(regexp_replace(lower(coalesce(co.source, '')), '^(leadgen:)?(feed:)?', ''), ''), 'other')
          as source,
-       -- Where outreach stands: a reply from a person wins (out-of-office and bounce messages are automatic, so
-       -- they don't count), then a bounce, then a delivered email; otherwise nothing has been sent yet.
-       case when exists (select 1 from replies r where r.contact_id = c.id
-                                            and coalesce(r.label, '') not in ('ooo', 'bounce'))
+       -- Where outreach stands: a reply from a person wins, then a bounce, then a delivered email; otherwise nothing
+       -- has been sent yet. Any mail from the lead counts as a reply, including a new thread from their address (we
+       -- emailed them first). Out-of-office and bounce messages are automatic, so they don't count.
+       case when exists (select 1 from inbox_replies s
+                         left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
+                         where s.contact_id = c.id and coalesce(hl.label, s.auto_label, '') not in ('ooo', 'bounce'))
               then 'Responded'
             when exists (select 1 from emails e where e.contact_id = c.id and e.status = 'bounced')
-              or exists (select 1 from replies r where r.contact_id = c.id and r.label = 'bounce')
+              or exists (select 1 from inbox_replies s where s.contact_id = c.id and s.auto_label = 'bounce')
               then 'Bounced'
             when exists (select 1 from emails e where e.contact_id = c.id
                                                 and e.status = 'sent' and e.sent_at is not null)
@@ -45,6 +55,15 @@ select c.id, row_number() over (order by c.collected_at, c.id) as number,
             else 'Not Sent' end as status,
        c.collected_at as added_at, c.last_engaged_at as last_contact_at
 from contacts c join companies co on co.id = c.company_id
+union all
+select co.id, co.name, null, co.name, 'https://' || co.domain, co.source_url, null,
+       coalesce(nullif(btrim(co.project_summary), ''), nullif(btrim(co.industry), '')),
+       coalesce(nullif(regexp_replace(lower(coalesce(co.source, '')), '^(leadgen:)?(feed:)?', ''), ''), 'other'),
+       'No Contact', co.created_at, null
+from companies co
+where co.lead_status not in ('DISCOVERED', 'REJECTED')
+  and not exists (select 1 from contacts c where c.company_id = co.id)
+) x
 """
 
 # delivery_status: 'Sent' means the agent sent it without an error (not proof it reached the inbox); 'Failed' = bounced.
@@ -53,24 +72,30 @@ select * from (
   select e.id, row_number() over (order by e.sent_at, e.id) as number, e.contact_id as lead_id, co.name as company,
          e.mailbox as "from", c.email as "to", e.subject, e.sent_at,
          case e.status when 'bounced' then 'Failed' else 'Sent' end as delivery_status,
-         (select r.id from replies r where r.email_id = e.id order by r.received_at limit 1) as reply_id
+         -- The reply to it: one read from Gmail that surely answers it (reply headers or the same conversation, not
+         -- just the sender's address).
+         (select s.id from inbox_replies s where s.email_id = e.id and s.match_method in ('header', 'thread')
+          order by s.received_at limit 1) as reply_id
   from emails e join contacts c on c.id = e.contact_id
   left join companies co on co.id = c.company_id
   where e.status in ('sent', 'bounced') and e.sent_at is not null
 ) s
 """
 
+# Replies read from Gmail, with a person's label in place of the automatic one (out-of-office / bounce), numbered
+# oldest first so "#12" stays put.
 _REPLIES = """
-select * from (
-  select r.id, row_number() over (order by r.received_at, r.id) as number,
-         coalesce(c.name, c.email) as sender_name, c.email as sender_email, e.mailbox as "to",
-         'Re: ' || coalesce(e.subject, '') as subject, r.received_at, r.email_id as in_reply_to_id,
-         r.label, r.body, r.contact_id as lead_id, co.name as company
-  from replies r
-  left join contacts c on c.id = r.contact_id
+select *, row_number() over (order by received_at, id) as number from (
+  select s.id, coalesce(c.name, c.email, s.from_email) as sender_name, coalesce(c.email, s.from_email) as sender_email,
+         e.mailbox as "to", coalesce(s.subject, 'Re: ' || coalesce(e.subject, '')) as subject, s.received_at,
+         s.email_id as in_reply_to_id, coalesce(hl.label, s.auto_label) as label, s.body, s.contact_id as lead_id,
+         co.name as company
+  from inbox_replies s
+  left join contacts c on c.id = s.contact_id
   left join companies co on co.id = c.company_id
-  left join emails e on e.id = r.email_id
-) s
+  left join emails e on e.id = s.email_id
+  left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
+) u
 """
 
 _BLOGS = """
@@ -131,8 +156,9 @@ def _without(d: dict, *keys: str) -> dict:
 
 
 Source = Annotated[str | None, Query(pattern="^[a-z0-9_.:-]{1,40}$")]
-Status = Annotated[str | None, Query(pattern="^(not_sent|sent|bounced|responded)$")]
-_STATUS = {"not_sent": "Not Sent", "sent": "Sent", "bounced": "Bounced", "responded": "Responded"}
+Status = Annotated[str | None, Query(pattern="^(not_sent|sent|bounced|responded|no_contact)$")]
+_STATUS = {"not_sent": "Not Sent", "sent": "Sent", "bounced": "Bounced", "responded": "Responded",
+           "no_contact": "No Contact"}
 PageNo = Annotated[int, Query(ge=1)]
 Limit = Annotated[int, Query(ge=1, le=200)]
 PAGE_SIZE = 50
@@ -181,6 +207,7 @@ async def lead_stats() -> dict:
     return {
         "total": sum(r["n"] for r in rows),
         "notSent": count("Not Sent"),
+        "noContact": count("No Contact"),  # in the pipeline, no contact to email yet (see Needs Contact)
         "awaiting": count("Sent"),  # emailed, no reply yet
         "responded": count("Responded"),
         "bounced": count("Bounced"),
@@ -188,26 +215,42 @@ async def lead_stats() -> dict:
     }
 
 
-# Each lead's latest classified reply written by a person (out-of-office and bounces are automatic, so skipped).
-# A lead is judged on this reply only, so a later "no" replaces an earlier "yes".
+# Each lead's latest reply written by a person (out-of-office and bounces are automatic, so skipped), with a person's
+# label if one was given. A lead is judged on this reply only, so a later "no" replaces an earlier "yes".
 _LATEST_HUMAN_REPLY = """
-select distinct on (r.contact_id) r.contact_id, r.id, r.received_at, r.label, r.review_note, r.body
-from replies r
-where r.label is not null and r.label not in ('ooo', 'bounce')
-order by r.contact_id, r.received_at desc
+select distinct on (s.contact_id) s.contact_id, s.id, s.email_id, s.received_at, coalesce(hl.label, s.auto_label) as label,
+       s.body, s.we_replied_at, hl.labelled_by, hl.labelled_at
+from inbox_replies s
+left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
+where s.contact_id is not null and coalesce(hl.label, s.auto_label, '') not in ('ooo', 'bounce')
+order by s.contact_id, s.received_at desc
 """
 
-# The reply classifier records "confidence 0.42 < 0.6" in review_note when it isn't sure of the label.
-_LOW_CONFIDENCE = re.compile(r"confidence\s+([\d.]+)\s*<", re.IGNORECASE)
 
-
-def _review_reason(note: str | None) -> str | None:
-    m = _LOW_CONFIDENCE.search(note or "")
-    return f"Low confidence ({float(m.group(1)):.2f})" if m else None
-
-
-# Labels whose low-confidence replies go to "Needs review" (a doubtful "no" may be a hidden "yes").
-_REVIEWABLE = ("interested", "question", "not_interested")
+def _judge(label: str | None, labelled: bool, text: str) -> tuple[str | None, str | None, dict]:
+    """Where a lead's latest reply goes on Positive Leads -> (group, why it needs review, its keyword score). text is
+    what the person wrote (quoted mail removed). group is positive / review / questions / notInterested / unsubscribe,
+    or None (not listed). A person's label is trusted as given; the score is still returned, to compare with it."""
+    scored = score_reply(text)
+    if label == "unsubscribe":
+        return "unsubscribe", None, scored
+    if labelled:
+        return {"interested": "positive", "question": "questions", "not_interested": "notInterested"}.get(label), None, scored
+    if mentions_unsubscribe(text):
+        # Safety net: a reply that seems to ask to stop is never shown as an ordinary lead. Only what the person wrote
+        # is read: our own quoted email (and its unsubscribe footer) is left out.
+        return "unsubscribe", "It seems to ask not to be contacted again", scored
+    score, hits = scored["score"], scored["hits"]
+    yes, no = any(h["weight"] > 0 for h in hits), any(h["weight"] < 0 for h in hits)
+    if yes and no:
+        return "review", f"Score {score:.2f}: says both yes and no", scored
+    if score >= POSITIVE_AT:
+        return "positive", None, scored
+    if scored["question"] and not no:
+        return "questions", None, scored
+    if score < REVIEW_AT:
+        return "notInterested", None, scored
+    return "review", f"Score {score:.2f}: no clear yes or no" if hits else "No keywords matched", scored
 
 
 def _follow_up_order(items: list[dict]) -> list[dict]:
@@ -219,50 +262,34 @@ def _follow_up_order(items: list[dict]) -> list[dict]:
 
 @router.get("/leads/positive")
 async def positive_leads() -> dict:
-    """Leads judged on their latest human reply, split into positive (interested, confident),
-    review (low confidence), questions and notInterested (a confident "no"). followUp says whether we have
-    answered that reply: 'replied' (sent), 'queued' (approved, not sent yet), 'waiting', or 'none' (a "no" that
-    needs no answer)."""
+    """Leads judged on their latest human reply, split into positive, review, questions, notInterested and unsubscribe
+    (asked to stop, or seems to) by a person's label or else the keyword score (_judge). score / scoreHits: the keyword
+    score and the phrases behind it. followUp says whether we have answered that reply: 'replied' (a later message of
+    ours in the Gmail conversation), 'none' (a "no" that needs no answer) or 'waiting'."""
     rows = await _rows(
         f"""select l.id, l.number, l.name, l.company, l.source, l.status,
-                   r.id as reply_id, r.received_at as replied_at, r.label, r.review_note, r.body,
-                   a.answered_at, a.answer_queued
+                   r.id as reply_id, r.received_at as replied_at, r.we_replied_at as answered_at, r.label, r.body,
+                   r.labelled_at
             from ({_LEADS}) l
-            join ({_LATEST_HUMAN_REPLY}) r on r.contact_id = l.id
-            left join lateral (
-              select min(e.sent_at) filter (where e.status = 'sent') as answered_at,
-                     coalesce(bool_or(e.status in ('approved', 'sending')), false) as answer_queued
-              from emails e where e.reply_id = r.id
-            ) a on true"""  # noqa: S608
+            join ({_LATEST_HUMAN_REPLY}) r on r.contact_id = l.id"""  # noqa: S608
     )
-    # Replies not classified yet, and since when: the agent classifies them while it runs, so an old one means it is
-    # stopped or stuck.
-    pending = (await _rows("select count(*) as pending, min(received_at) as since from replies where label is null"))[0]
-    # Same count as the dashboard's Responses: every lead with a reply written by a person, classified or not.
+    # Same count as the dashboard's Responses: every lead with a reply written by a person, labelled or not.
     replied = await _value(f"select count(*) from ({_LEADS}) l where status = 'Responded'")  # noqa: S608
-    groups: dict[str, list[dict]] = {"positive": [], "review": [], "questions": [], "notInterested": []}
+    groups: dict[str, list[dict]] = {"positive": [], "review": [], "questions": [], "notInterested": [],
+                                     "unsubscribe": []}
     for r in rows:
-        r["preview"] = _preview(r.pop("body"))
-        r["reviewReason"] = _review_reason(r.pop("reviewNote"))
-        queued = r.pop("answerQueued")
-        review = bool(r["reviewReason"]) and r["label"] in _REVIEWABLE
-        # A confident "no" closes the lead: nothing is waiting on us unless someone chose to answer anyway.
-        closed = r["label"] == "not_interested" and not review
-        r["followUp"] = "replied" if r["answeredAt"] else "queued" if queued else "none" if closed else "waiting"
-        if review:
-            groups["review"].append(r)
-        elif r["label"] == "interested":
-            groups["positive"].append(r)
-        elif r["label"] == "question":
-            groups["questions"].append(r)
-        elif closed:
-            groups["notInterested"].append(r)
-    return {
-        **{k: _follow_up_order(v) for k, v in groups.items()},
-        "repliedLeads": replied or 0,
-        "pending": pending["pending"] or 0,
-        "pendingSince": pending["since"],
-    }
+        body = r.pop("body")
+        labelled = r.pop("labelledAt") is not None
+        group, r["reviewReason"], scored = _judge(r["label"], labelled, _strip_quoted(body))
+        r["score"], r["scoreHits"] = scored["score"], scored["hits"]
+        r["preview"] = _preview(body)
+        r["labelledByPerson"] = labelled
+        # A "no" closes the lead: nothing is waiting on us unless someone chose to answer anyway.
+        closed = group == "notInterested" or (group == "unsubscribe" and r["label"] == "unsubscribe")
+        r["followUp"] = "replied" if r["answeredAt"] else "none" if closed else "waiting"
+        if group:
+            groups[group].append(r)
+    return {**{k: _follow_up_order(v) for k, v in groups.items()}, "repliedLeads": replied or 0}
 
 
 # Same rules as the reply classifier's strip_quoted (agent/replies.py): keep only what the person wrote.
@@ -296,8 +323,8 @@ async def lead(lead_id: str) -> dict:
     except asyncpg.DataError as exc:
         raise HTTPException(404, "Not found") from exc
     reply = await (await _pg()).fetchrow(
-        f"select id, label, review_note, received_at, body from ({_LATEST_HUMAN_REPLY}) r "  # noqa: S608
-        "where contact_id = $1::uuid",
+        "select id, email_id, label, received_at, body, labelled_by, labelled_at "  # noqa: S608
+        f"from ({_LATEST_HUMAN_REPLY}) r where contact_id = $1::uuid",
         lead_id,
     )
     email = await (await _pg()).fetchrow(
@@ -305,6 +332,7 @@ async def lead(lead_id: str) -> dict:
         "order by sent_at desc limit 1",
         lead_id,
     )
+    # The reply opens in the drawer; with no reply, the email sent.
     row["conversation"] = (
         {"type": "reply", "id": str(reply["id"])}
         if reply
@@ -313,7 +341,16 @@ async def lead(lead_id: str) -> dict:
         else None
     )
     row["replyLabel"] = reply["label"] if reply else None
-    row["reviewReason"] = _review_reason(reply["review_note"]) if reply else None
+    group, row["reviewReason"], scored = (
+        _judge(reply["label"], reply["labelled_at"] is not None, _strip_quoted(reply["body"]))
+        if reply else (None, None, None)
+    )
+    row["replyGroup"] = group
+    row["score"] = scored["score"] if scored else None
+    row["scoreHits"] = scored["hits"] if scored else []
+    row["labelledBy"] = (
+        {"by": reply["labelled_by"], "at": reply["labelled_at"].isoformat()} if reply and reply["labelled_at"] else None
+    )
     # The reply the lead is judged on: what the person wrote (quoted earlier mail left out; the full thread is in
     # History). Falls back to the whole body when everything in it looks quoted.
     row["latestReply"] = (
@@ -329,11 +366,6 @@ async def lead(lead_id: str) -> dict:
 # Search text: matched case-insensitively anywhere in the listed columns (strpos, so % and _ are plain characters).
 Search = Annotated[str | None, Query(max_length=100)]
 SentStatus = Annotated[str | None, Query(pattern="^(sent|failed)$")]
-# A reply's label from the classifier, 'unclassified' (not labelled yet), or 'human' (anything but the automatic
-# out-of-office and bounce messages).
-ReplyLabel = Annotated[
-    str | None, Query(pattern="^(interested|question|not_interested|unsubscribe|ooo|bounce|unclassified|human)$")
-]
 
 
 def _search(columns: tuple[str, ...], q: str | None, conds: list[str], args: list) -> None:
@@ -373,23 +405,6 @@ async def sent_email(email_id: str) -> dict:
     except asyncpg.DataError as exc:
         raise HTTPException(404, "Not found") from exc
     return row
-
-
-@router.get("/emails/replies")
-async def replies(q: Search = None, label: ReplyLabel = None, page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
-    """One page of replies (newest first), searchable by sender, company and subject, filtered by label."""
-    conds, args = [], []
-    _search(("sender_name", "sender_email", "company", "subject"), q, conds, args)
-    if label == "unclassified":
-        conds.append("label is null")
-    elif label == "human":
-        conds.append("coalesce(label, '') not in ('ooo', 'bounce')")
-    elif label:
-        args.append(label)
-        conds.append(f"label = ${len(args)}")
-    out = await _page(_REPLIES, "received_at desc, id", page, limit, _where(conds), tuple(args))
-    out["items"] = [_without(r, "body") for r in out["items"]]
-    return out
 
 
 @router.get("/emails/replies/{reply_id}")

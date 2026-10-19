@@ -1,5 +1,7 @@
 name: CI
-# Every push and pull request: the backend's tests, the dashboard's own tests, and a production build of the dashboard.
+# Every push and pull request: the backend's lint and tests, the dashboard's lint and tests, and a production build of
+# the dashboard. Nothing here deploys, reads secrets or touches Supabase: the real-SQL tests start their own throwaway
+# Postgres.
 on:
   push:
   pull_request:
@@ -11,20 +13,23 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend tests (Python 3.12)
+    name: Backend lint and tests (Python 3.12)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
       run:
         working-directory: dashboardbackend
+    env:
+      REQUIRE_POSTGRES: "1"  # the runner has Postgres installed: the real-SQL tests must run, never be skipped
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: dashboardbackend/requirements.txt
-      - run: pip install -r requirements.txt
+          cache-dependency-path: dashboardbackend/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
       - run: python -m pytest -q tests --junitxml=pytest-report.xml
       # Failures are also reported as annotations, so they can be read without the log.
       - name: Report test failures
@@ -41,7 +46,7 @@ jobs:
           PY
 
   dashboard:
-    name: Dashboard tests and build (Node 22)
+    name: Dashboard lint, tests and build (Node 22)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -60,5 +65,6 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: npm run build

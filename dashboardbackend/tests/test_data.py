@@ -101,6 +101,7 @@ def test_lead_stats(monkeypatch):
     assert client.get("/leads/stats", headers=_auth()).json() == {
         "total": 5,
         "notSent": 2,
+        "noContact": 0,
         "awaiting": 1,
         "responded": 1,
         "bounced": 1,
@@ -108,19 +109,18 @@ def test_lead_stats(monkeypatch):
     }
 
 
-def _reply(id_, label, body="Hi Alex,\n\nSounds good.\n\nThanks", note=None, at="2026-10-01", answered=None, queued=False):
-    return {"id": id_, "label": label, "reviewNote": note, "body": body, "repliedAt": at,
-            "answeredAt": answered, "answerQueued": queued}
+def _reply(id_, label="interested", body="Hi Alex,\n\nSounds good.\n\nThanks", at="2026-10-01", answered=None,
+           labelled=True):
+    """A lead's latest reply as the /leads/positive query returns it. labelled: a person chose `label`."""
+    return {"id": id_, "label": label, "body": body, "repliedAt": at, "answeredAt": answered,
+            "labelledAt": "2026-10-02T09:00:00+00:00" if labelled else None}
 
 
 @pytest.fixture
 def positive_rows(monkeypatch):
-    """Serve the given rows to /leads/positive, with 2 replies still waiting to be classified (the oldest since
-    Oct 1) and 9 leads that replied in person (classified or not)."""
+    """Serve the given rows to /leads/positive, with 9 leads that replied in person (labelled or not)."""
     def use(rows):
         async def fake_rows(sql, *_):
-            if "label is null" in sql:
-                return [{"pending": 2, "since": "2026-10-01T08:00:00+00:00"}]
             return [dict(r) for r in rows]
 
         async def fake_value(sql, *_):
@@ -135,36 +135,42 @@ def positive_rows(monkeypatch):
 def test_positive_leads_groups(positive_rows):
     positive_rows([
         _reply("a", "interested"),
-        _reply("b", "interested", note="confidence 0.42 < 0.6"),
+        _reply("b", None, body="Maybe, depends on timing.", labelled=False),  # no label, no keyword
+        _reply("h", None, body="Yes, let's talk next week.", labelled=False),  # no label: the keyword score decides
         _reply("c", "question"),
-        _reply("d", "interested", note="reply_body too long"),  # draft problem only: still positive
+        _reply("d", None, body="Not right now, but let's talk in Q2", labelled=False),  # says yes and no
         _reply("e", "not_interested"),
         _reply("f", "unsubscribe"),
-        _reply("g", "not_interested", note="confidence 0.50 < 0.6"),  # doubtful "no" -> review
+        _reply("g", None, body="Please remove me from your list.", labelled=False),  # seems to ask to stop
     ])
     res = client.get("/leads/positive", headers=_auth()).json()
-    assert sorted(r["id"] for r in res["positive"]) == ["a", "d"]
-    assert [r["id"] for r in res["review"]] == ["b", "g"]  # equal wait: stable sort keeps input order
-    assert {r["id"]: r["reviewReason"] for r in res["review"]}["b"] == "Low confidence (0.42)"
+    assert [r["id"] for r in res["positive"]] == ["a", "h"]  # equal wait: stable sort keeps input order
+    assert [r["id"] for r in res["review"]] == ["b", "d"]
+    reasons = {r["id"]: r["reviewReason"] for r in res["review"]}
+    assert reasons == {"b": "No keywords matched", "d": "Score 0.55: says both yes and no"}
+    h = res["positive"][1]
+    assert h["score"] == 0.75 and h["scoreHits"] == [{"phrase": "let's talk", "weight": 0.25}]
     assert [r["id"] for r in res["questions"]] == ["c"]
-    assert [(r["id"], r["followUp"]) for r in res["notInterested"]] == [("e", "none")]  # unsubscribe "f" not listed
-    assert {r["id"]: r["followUp"] for r in res["review"]}["g"] == "waiting"  # a doubtful "no" may need an answer
-    # repliedLeads matches the dashboard's Responses (every lead that replied in person), not just the 7 classified
-    assert res["repliedLeads"] == 9 and res["pending"] == 2 and res["pendingSince"] == "2026-10-01T08:00:00+00:00"
-    assert all("body" not in r and "reviewNote" not in r and "answerQueued" not in r for r in res["positive"])
+    assert [(r["id"], r["followUp"]) for r in res["notInterested"]] == [("e", "none")]
+    # A person's "unsubscribe" closes the lead; one only guessed from the wording still waits on us.
+    assert [(r["id"], r["followUp"]) for r in res["unsubscribe"]] == [("g", "waiting"), ("f", "none")]
+    assert res["repliedLeads"] == 9
+    assert set(res) == {"positive", "review", "questions", "notInterested", "unsubscribe", "repliedLeads"}
+    assert all("body" not in r and "labelledAt" not in r for r in res["positive"])
+    assert res["positive"][0]["labelledByPerson"] is True and res["review"][0]["labelledByPerson"] is False
 
 
 def test_positive_leads_follow_up_order(positive_rows):
     positive_rows([
-        _reply("replied", "interested", at="2026-10-05", answered="2026-10-05T12:00:00"),
-        _reply("waiting-new", "interested", at="2026-10-04"),
-        _reply("queued", "interested", at="2026-10-03", queued=True),
-        _reply("waiting-old", "interested", at="2026-10-01"),
+        _reply("replied-new", at="2026-10-05", answered="2026-10-05T12:00:00"),
+        _reply("waiting-new", at="2026-10-04"),
+        _reply("replied-old", at="2026-10-03", answered="2026-10-03T12:00:00"),
+        _reply("waiting-old", at="2026-10-01"),
     ])
     res = client.get("/leads/positive", headers=_auth()).json()["positive"]
     # waiting first (longest-waiting on top), then the rest newest first
-    assert [r["id"] for r in res] == ["waiting-old", "waiting-new", "replied", "queued"]
-    assert [r["followUp"] for r in res] == ["waiting", "waiting", "replied", "queued"]
+    assert [r["id"] for r in res] == ["waiting-old", "waiting-new", "replied-new", "replied-old"]
+    assert [r["followUp"] for r in res] == ["waiting", "waiting", "replied", "replied"]
 
 
 def test_positive_leads_preview(positive_rows):
@@ -227,28 +233,8 @@ def test_sent_emails_without_filters(db):
     assert ") t where" not in calls[0][0] and calls[0][1] == ()
 
 
-@pytest.mark.parametrize(("label", "sql", "args"), [
-    ("interested", "label = $1", ("interested",)),
-    ("unclassified", "label is null", ()),
-    ("human", "coalesce(label, '') not in ('ooo', 'bounce')", ()),
-])
-def test_replies_label_filter(db, label, sql, args):
-    calls, _ = db
-    client.get(f"/emails/replies?label={label}", headers=_auth())
-    assert sql in calls[0][0] and calls[0][1] == args
-
-
-def test_replies_search_and_label_together(db):
-    calls, answer = db
-    answer.update(rows=[{"id": "r", "number": 1, "label": "ooo", "body": "away"}], value=1)
-    res = client.get("/emails/replies?q=priya&label=ooo", headers=_auth()).json()
-    assert res["items"] == [{"id": "r", "number": 1, "label": "ooo"}]  # body left out of the list
-    assert calls[0][1] == ("priya", "ooo") and "label = $2" in calls[0][0]
-
-
 def test_history_filters_are_checked(db):
     assert client.get("/emails/sent?status=delivered", headers=_auth()).status_code == 422
-    assert client.get("/emails/replies?label=spam", headers=_auth()).status_code == 422
     assert client.get(f"/emails/sent?q={'x' * 101}", headers=_auth()).status_code == 422
 
 
@@ -260,7 +246,7 @@ def lead_db(monkeypatch):
     """Fake pool for /leads/{id}: the lead, its latest human reply (`reply`, None = no reply) and latest sent email."""
     import datetime as dt
 
-    state = {"reply": {"id": "r1", "label": "interested", "review_note": None,
+    state = {"reply": {"id": "r1", "label": None, "email_id": "e0", "labelled_by": None, "labelled_at": None,
                        "received_at": dt.datetime(2026, 10, 5, 9, 30, tzinfo=dt.UTC),
                        "body": "Hi Alex,\n\nYes, let's talk.\n\nOn Mon, 5 Oct 2026, Alex <a@x.co> wrote:\n> Interested?"}}
 
@@ -269,7 +255,7 @@ def lead_db(monkeypatch):
 
     class Pool:
         async def fetchrow(self, sql, *_):
-            return state["reply"] if "review_note" in sql else {"id": "e1"}
+            return state["reply"] if "labelled_by" in sql else {"id": "e1"}
 
     async def pg():
         return Pool()
@@ -284,6 +270,9 @@ def test_lead_includes_what_the_person_wrote(lead_db):
     assert res["latestReply"] == {"id": "r1", "receivedAt": "2026-10-05T09:30:00+00:00",
                                   "text": "Hi Alex,\n\nYes, let's talk."}  # quoted earlier mail left out
     assert res["conversation"] == {"type": "reply", "id": "r1"} and "notes" not in res
+    # Not labelled: its keyword score ("let's talk", +0.25) puts it in Positive.
+    assert res["replyGroup"] == "positive" and res["labelledBy"] is None and res["score"] == 0.75
+    assert res["scoreHits"] == [{"phrase": "let's talk", "weight": 0.25}]
 
 
 def test_lead_reply_that_is_all_quoted_is_shown_whole(lead_db):
@@ -296,3 +285,4 @@ def test_lead_without_a_reply(lead_db):
     lead_db["reply"] = None
     res = client.get("/leads/7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d", headers=_auth()).json()
     assert res["latestReply"] is None and res["conversation"] == {"type": "sent", "id": "e1"}
+    assert res["score"] is None and res["scoreHits"] == []

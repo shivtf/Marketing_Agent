@@ -80,6 +80,13 @@ export const detail = (msg) => ({
   ...summary(msg), to: header(msg, 'To'), cc: header(msg, 'Cc'), body: bodyText(msg), attachments: attachments(msg),
 });
 
+// Only the emails sent from one of `addresses`. Applied to every result an employee gets, after Gmail answered, so
+// nothing typed in the search box (e.g. ") OR (in:inbox") can widen what they see.
+export function onlyFrom(items, addresses) {
+  const allowed = new Set(addresses.map((a) => a.toLowerCase()));
+  return items.filter((m) => allowed.has(m.from.email));
+}
+
 // The Gmail search for a view: the inbox, or mail from the people the agent emailed (`from`: their addresses), found
 // anywhere but spam and trash so archived replies count too. `q` is the user's own Gmail search, added as is: it can
 // only narrow what this read-only access already sees. -> null when there is nothing to search (nobody emailed yet).

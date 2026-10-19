@@ -1,8 +1,10 @@
 -- A limited database login for this backend (audit 2026-10-17, F-06). Until now it used the database owner, so a leaked
 -- .env gave full control of every table: leads, approvals, the Campaign Agent's publishing functions.
--- Run once in the Supabase SQL editor (as the owner). Safe to run again.
+-- Run once in the Supabase SQL editor (as the owner), after 006 and 007. Safe to run again.
+-- (This was 007_dashboard_backend_role.sql on main; renumbered because 007 is inbox_replies.)
 --
--- The backend reads the Marketing Agent's lead tables, keeps its one-sign-in table, adds a contact through
+-- The backend reads the Marketing Agent's lead tables, keeps its one-sign-in table, reads the saved Gmail connection,
+-- keeps the replies it reads from Gmail and the labels people give them, adds a contact through
 -- submit_manual_contact(), and needs four facts about Supabase Auth. Those four go through the functions below, which
 -- run with the owner's rights but can do nothing else. Then: set a password
 --   alter role dashboard_backend with login password '...';
@@ -17,12 +19,11 @@ alter role dashboard_backend set idle_in_transaction_session_timeout = '60s';
 alter role dashboard_backend set lock_timeout = '30s';
 grant usage on schema public to dashboard_backend;
 
--- Read only: what the pages show.
+-- Read only: what the pages show (the only agent tables app/ reads).
 do $$
 declare t text;
 begin
-  foreach t in array array['companies', 'contacts', 'emails', 'replies', 'content_posts', 'content_variants',
-                           'approvals', 'campaign', 'blog_plan'] loop
+  foreach t in array array['companies', 'contacts', 'emails', 'content_posts'] loop
     if to_regclass('public.' || t) is not null then
       execute format('grant select on public.%I to dashboard_backend', t);
       execute format('drop policy if exists dashboard_backend_read on public.%I', t);
@@ -31,11 +32,21 @@ begin
   end loop;
 end $$;
 
--- Its own table.
-grant select, insert, update, delete on public.dashboard_presence to dashboard_backend;
-drop policy if exists dashboard_backend_all on public.dashboard_presence;
-create policy dashboard_backend_all on public.dashboard_presence
-for all to dashboard_backend using (true) with check (true);
+-- Its own tables: the one-sign-in table (001), and the replies read from Gmail and people's labels (007).
+do $$
+declare t text;
+begin
+  foreach t in array array['dashboard_presence', 'inbox_replies', 'inbox_seen', 'reply_labels'] loop
+    execute format('grant select, insert, update, delete on public.%I to dashboard_backend', t);
+    execute format('drop policy if exists dashboard_backend_all on public.%I', t);
+    execute format('create policy dashboard_backend_all on public.%I for all to dashboard_backend using (true) with check (true)', t);
+  end loop;
+end $$;
+
+-- The Gmail connection the dashboard saved (006): read only. The dashboard's own server writes it with the service key.
+grant select on public.gmail_connection to dashboard_backend;
+drop policy if exists dashboard_backend_read on public.gmail_connection;
+create policy dashboard_backend_read on public.gmail_connection for select to dashboard_backend using (true);
 
 -- The one write to the leads (Marketing Agent migration 0013).
 do $$ begin

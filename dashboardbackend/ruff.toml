@@ -1,0 +1,13 @@
+# Python lint for the dashboard backend: `ruff check .` (CI runs it on every push; .github/workflows/ci.yml).
+line-length = 120
+target-version = "py312"
+
+[lint]
+# pycodestyle, pyflakes, import order, bugbear, security (bandit), blind except, async pitfalls, modern syntax.
+select = ["E", "F", "W", "I", "B", "S", "BLE", "ASYNC", "UP"]
+# Line length is left to judgement (some prose comments and SQL run a little longer); line-length still guides wrapping.
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+# Tests: plain asserts, made-up secrets for fake tokens, and starting a throwaway Postgres are expected there.
+"tests/*" = ["S101", "S105", "S106", "S603"]

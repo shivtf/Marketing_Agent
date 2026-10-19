@@ -1,0 +1,4 @@
+# For development and CI only (Render installs requirements.txt): tests and lint. Exact versions, like requirements.txt.
+-r requirements.txt
+pytest==9.1.1
+ruff==0.17.1
