@@ -500,23 +500,13 @@ body { background: var(--page-bg); }
 .panel-title { display: flex; align-items: center; gap: 12px; margin: 0 0 20px; font-size: 19px; font-weight: 700; letter-spacing: -.015em; }
 .panel-title svg { color: var(--accent); width: 24px; height: 24px; }
 
-/* Stat cards */
-.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-.dash .kpi { display: flex; align-items: flex-start; gap: 16px; padding: 20px; }
-.kpi-tile { width: 56px; height: 56px; border-radius: 12px; display: grid; place-items: center; flex: none; }
-.kpi-tile svg { width: 28px; height: 28px; }
+/* Tones: a colour and its background, used by the pipeline stages and other tiles */
 .blue { --c: var(--blue); --bg: var(--blue-bg); }
 .green { --c: var(--green); --bg: var(--green-bg); }
 .red { --c: var(--rose); --bg: var(--rose-bg); }
 .amber { --c: var(--amber); --bg: var(--amber-bg); }
 .lavender { --c: var(--lav); --bg: var(--lav-bg); }
 .slate { --c: var(--slate); --bg: var(--slate-bg); }
-.kpi-tile { background: var(--bg); color: var(--c); }
-.kpi-body { min-width: 0; }
-.kpi-label { font-weight: 500; font-size: 14.5px; }
-.kpi-value { font-size: 30px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; margin-top: 4px; font-variant-numeric: tabular-nums; }
-.kpi-hint { margin-top: 6px; color: var(--green); font-size: 13px; font-weight: 600; }
-.kpi-hint.blue { color: var(--green); }
 
 /* Lead Pipeline */
 .stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
@@ -594,7 +584,6 @@ a.row-icon:hover { background: var(--accent-soft); color: var(--accent); }
   .dash-side { display: contents; }
   .agent-panel { order: -1; }
   .stage-top { flex-direction: column; }
-  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hero-art { display: none; }
 }
 @media (max-width: 900px) {
@@ -604,7 +593,6 @@ a.row-icon:hover { background: var(--accent-soft); color: var(--accent); }
 }
 @media (max-width: 760px) {
   .page.dash { padding: 20px 16px 48px; }
-  .kpis { grid-template-columns: minmax(0, 1fr); }
   .hero-title { font-size: 26px; }
   .dash .card { padding: 18px 16px; }
 }
@@ -626,13 +614,6 @@ a.row-icon:hover { background: var(--accent-soft); color: var(--accent); }
   .dash .card { padding: 18px 20px; }
   .panel-title { font-size: 17px; margin-bottom: 14px; }
   .panel-title svg { width: 21px; height: 21px; }
-  .kpis { gap: 14px; flex: none; }
-  .dash .kpi { padding: 14px 16px; gap: 14px; align-items: center; }
-  .kpi-tile { width: 48px; height: 48px; }
-  .kpi-tile svg { width: 24px; height: 24px; }
-  .kpi-label { font-size: 13.5px; }
-  .kpi-value { font-size: 25px; }
-  .kpi-hint { font-size: 12.5px; margin-top: 2px; }
   .dash-main > section:not(.leads-card) { flex: none; }
   .stage { padding: 12px; gap: 10px; }
   .stage-icon { width: 36px; height: 36px; }
@@ -668,8 +649,6 @@ a.row-icon:hover { background: var(--accent-soft); color: var(--accent); }
   .hero-title { font-size: 24px; }
   .hero-wave { font-size: 21px; }
   .hero-sub { font-size: 14px; margin-top: 2px; }
-  .kpi-hint { display: none; }
-  .dash .kpi { padding: 12px 16px; }
   .panel-title { margin-bottom: 10px; }
 }
 @media (max-width: 1500px) {
