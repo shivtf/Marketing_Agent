@@ -128,7 +128,7 @@ The dashboard does not stop the agent's emails; an unsubscribe still has to be h
 |---|---|---|
 | A person's label wins | Send #11 (Needs review), open the drawer, choose **Interested**, Save | Moves to Positive; Why Here says "Labelled by a person"; the drawer still shows Score 0.65 and "A person's label is used instead" |
 | Remove the label | In the drawer, click **Remove** | Back to Needs review |
-| Every email stays | Send #2 (Positive), check, then send #14 (Not interested), check | Two rows for Test Lead: #2 stays in Positive (follow-up **Wrote again**), #14 is added to Not interested. The Positive Leads card goes down by one: a lead counts by their latest email |
+| Every email stays | Send #2 (Positive), check, then send #14 (Not interested), check | Two rows for Test Lead: #2 stays in Positive (follow-up **Wrote again**), #14 is added to Not interested. The Positive Leads card goes down by one: a lead who said no after their yes is not counted. A later question or unclear email would not change it |
 | We replied | Reply to the test lead's email from the connected Gmail, then click Check inbox | Follow-up shows **We replied** with the date |
 | Waiting | Any Positive reply we have not answered | Follow-up shows **Waiting · today**, red after 3 days |
 | Already read | Click Check inbox twice | The second check says "no new replies from leads" |
