@@ -151,21 +151,23 @@ def _get(client, path):
 def test_every_reply_lands_in_the_right_place(client):
     """The table at the top of this file, checked in one go."""
     res = _get(client, "/leads/positive")
-    tabs = {lead["name"]: tab for tab in ("positive", "review", "questions", "notInterested", "unsubscribe")
-            for lead in res[tab]}
-    assert tabs == {
-        "Positive Priya": "positive",
-        "Answered Anna": "positive",
-        "Keyword Kate": "positive",  # no label: the keyword score (1.0) decides
-        "Review Rahul": "review",
-        "Sender Sid": "positive",  # a new thread from his address: scored like any reply
-        "Question Quinn": "questions",
-        "NotInterested Nina": "notInterested",
-        "ChangedMind Carl": "notInterested",  # their last reply says no
-        "Keyword Ken": "notInterested",  # no label: the keyword score (0.0) decides
-        "Unsubscribe Uma": "unsubscribe",
+    tabs = sorted((lead["name"], tab) for tab in ("positive", "review", "questions", "notInterested", "unsubscribe")
+                  for lead in res[tab])
+    assert tabs == sorted([
+        ("Positive Priya", "positive"),
+        ("Answered Anna", "positive"),
+        ("Keyword Kate", "positive"),  # no label: the keyword score (1.0) decides
+        ("Review Rahul", "review"),
+        ("Sender Sid", "positive"),  # a new thread from his address: scored like any reply
+        ("Question Quinn", "questions"),
+        ("NotInterested Nina", "notInterested"),
+        # Every email is listed on its own: Carl's "Interested!" stays, and his later "Not now." is added.
+        ("ChangedMind Carl", "positive"),
+        ("ChangedMind Carl", "notInterested"),
+        ("Keyword Ken", "notInterested"),  # no label: the keyword score (0.0) decides
+        ("Unsubscribe Uma", "unsubscribe"),
         # Not on the page: OutOfOffice Olga (automatic reply), Silent Sam, Bounced Ben, New Nora.
-    }
+    ])
     assert res["repliedLeads"] == 10  # everyone marked Responded in the table
     kate = next(lead for lead in res["positive"] if lead["name"] == "Keyword Kate")
     assert kate["score"] == 1.0 and [h["phrase"] for h in kate["scoreHits"]] == ["send me some times", "sounds great"]
@@ -174,7 +176,8 @@ def test_every_reply_lands_in_the_right_place(client):
 def test_follow_up_column(client):
     res = _get(client, "/leads/positive")
     assert {lead["name"]: lead["followUp"] for lead in res["positive"]} == {
-        "Positive Priya": "waiting", "Answered Anna": "replied", "Keyword Kate": "waiting", "Sender Sid": "waiting"}
+        "Positive Priya": "waiting", "Answered Anna": "replied", "Keyword Kate": "waiting", "Sender Sid": "waiting",
+        "ChangedMind Carl": "later"}  # his old "Interested!": he wrote again since, so it is not the one waiting
     assert res["positive"][0]["name"] == "Positive Priya"  # still waiting for our answer: listed first
     assert {lead["followUp"] for lead in res["notInterested"]} == {"none"}  # a "no" needs no answer
 

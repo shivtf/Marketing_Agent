@@ -101,19 +101,20 @@ export function getKinds(goto) {
     },
   };
 
-  // Same drawer as a lead, opened from a Positive Leads section: Previous/Next stays in that section
-  // (positive / review / questions / notInterested, with the page's search and sort) and the latest reply's label
-  // and any review reason are shown.
+  // Same drawer as a lead, opened from a Positive Leads section on one reply (each reply is its own row there, so the
+  // id is the reply's): Previous/Next stays in that section (with the page's search and sort), and that reply, its
+  // label, score and any review reason are shown.
   const fromPositivePage = (group) => ({
     ...lead,
     paged: null,
     section: 'positive',
+    load: api.getLeadByReply,
     list: (positive, _filter, view) => visiblePositive(positive[group], view),
     describe: (d) => {
-      const v = lead.describe(d);
+      const v = { ...lead.describe(d), bodyTitle: d.latestReply ? `Their reply · ${fmtDate(d.latestReply.receivedAt)}` : null };
       const text = REPLY_LABELS[d.replyLabel];
       const extra = [
-        <MetaRow key="label" k="Latest Reply">
+        <MetaRow key="label" k="This Reply">
           {text ? <Badge text={text} tone={toneOf(text)} /> : <Badge text="Not labelled" tone="gray" />}
         </MetaRow>,
         ...(d.score != null ? [

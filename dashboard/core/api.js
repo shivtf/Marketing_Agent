@@ -64,6 +64,8 @@ export const resumeAgent = () => authFetch('/api/ca/state', { method: 'POST', bo
 export const getLeads = ({ status, source, page, limit } = {}) => apiFetch(`/leads${qs({ status, source, page, limit })}`);
 export const getLeadStats = () => apiFetch('/leads/stats');
 export const getLead = (id) => apiFetch(`/leads/${encodeURIComponent(id)}`);
+// A lead with one particular reply of theirs (Positive Leads lists every reply on its own row).
+export const getLeadByReply = (replyId) => apiFetch(`/leads/by-reply/${encodeURIComponent(replyId)}`);
 // -> { positive, review, questions, notInterested, unsubscribe, repliedLeads }: leads judged on their latest human reply.
 // notInterested defaults to empty so a backend deployed before that group still loads.
 // An older backend returns a plain list; fail cleanly (the page shows "Couldn't load" + Retry) instead of crashing.

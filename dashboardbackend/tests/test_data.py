@@ -110,10 +110,11 @@ def test_lead_stats(monkeypatch):
 
 
 def _reply(id_, label="interested", body="Hi Alex,\n\nSounds good.\n\nThanks", at="2026-10-01", answered=None,
-           labelled=True):
-    """A lead's latest reply as the /leads/positive query returns it. labelled: a person chose `label`."""
-    return {"id": id_, "label": label, "body": body, "repliedAt": at, "answeredAt": answered,
-            "labelledAt": "2026-10-02T09:00:00+00:00" if labelled else None}
+           labelled=True, lead=None):
+    """One reply as the /leads/positive query returns it (lead: its lead, by default a lead of its own).
+    labelled: a person chose `label`."""
+    return {"id": id_, "leadId": lead or f"lead-{id_}", "label": label, "body": body, "repliedAt": at,
+            "answeredAt": answered, "labelledAt": "2026-10-02T09:00:00+00:00" if labelled else None}
 
 
 @pytest.fixture
@@ -171,6 +172,21 @@ def test_positive_leads_follow_up_order(positive_rows):
     # waiting first (longest-waiting on top), then the rest newest first
     assert [r["id"] for r in res] == ["waiting-old", "waiting-new", "replied-new", "replied-old"]
     assert [r["followUp"] for r in res] == ["waiting", "waiting", "replied", "replied"]
+
+
+def test_every_reply_of_a_lead_stays_on_the_page(positive_rows):
+    # Carl said yes, then no: both emails are listed, each in its own group. The older one is not "waiting": he wrote
+    # again since.
+    positive_rows([
+        _reply("yes", "interested", at="2026-10-01", lead="carl"),
+        _reply("no", "not_interested", at="2026-10-05", lead="carl"),
+        _reply("again", "interested", at="2026-10-03", lead="priya"),
+        _reply("latest", "interested", at="2026-10-04", lead="priya"),
+    ])
+    res = client.get("/leads/positive", headers=_auth()).json()
+    assert [(r["id"], r["followUp"]) for r in res["positive"]] == [
+        ("latest", "waiting"), ("again", "later"), ("yes", "later")]
+    assert [(r["id"], r["leadId"]) for r in res["notInterested"]] == [("no", "carl")]
 
 
 def test_positive_leads_preview(positive_rows):

@@ -66,7 +66,7 @@ export const ExtLink = ({ href, children }) => (
 export function StatCards({ items }) {
   return (
     <div className="grid3">
-      {items.map(({ label, icon, tone = '', value, status, onRetry }) => (
+      {items.map(({ label, icon, tone = '', value, sub, status, onRetry }) => (
         <div key={label} className="card stat">
           <div className={`tile round ${tone}`}><Icon name={icon} /></div>
           <div>
@@ -74,6 +74,7 @@ export function StatCards({ items }) {
             {status === 'error' && <button className="btn" onClick={onRetry}>Retry</button>}
             {status === 'loading' && <div className="skel" style={{ height: 30, width: 90 }} />}
             {status === 'ready' && <div className="big">{value}</div>}
+            {status === 'ready' && sub && <div className="muted small">{sub}</div>}
           </div>
         </div>
       ))}

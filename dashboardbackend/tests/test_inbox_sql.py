@@ -260,8 +260,9 @@ def test_lead_statuses(env):
 
 def test_a_lead_opens_its_reply(env):
     priya = next(r for r in _get(env, "/leads/positive")["positive"] if r["name"] == "Priya")
-    lead = _get(env, f"/leads/{priya['id']}")
+    lead = _get(env, f"/leads/{priya['leadId']}")
     assert lead["conversation"] == {"type": "reply", "id": priya["replyId"]}
+    assert _get(env, f"/leads/by-reply/{priya['id']}") == lead  # the row's own reply is her only one
     sent = _db(env, "select e.id from emails e join contacts c on c.id = e.contact_id where c.name = 'Priya'")[0]["id"]
     reply = _get(env, f"/emails/replies/{priya['replyId']}")
     assert reply["senderEmail"] == "priya@lead.test" and reply["label"] is None
@@ -289,7 +290,7 @@ def test_a_labelled_reply_shows_who_labelled_it(env):
     body = {"replyId": dana["replyId"], "label": "not_interested"}
     assert c.post("/inbox/label", headers=_auth(), json=body).status_code == 200
     assert _by_name(_get(env, "/leads/positive"))["notInterested"] == ["Dana"]
-    lead = _get(env, f"/leads/{dana['id']}")
+    lead = _get(env, f"/leads/by-reply/{dana['id']}")
     assert lead["replyLabel"] == "not_interested" and lead["replyGroup"] == "notInterested"
     assert lead["labelledBy"]["by"] == "ana@team.test"
     assert _get(env, f"/emails/replies/{dana['replyId']}")["label"] == "not_interested"
@@ -354,3 +355,22 @@ def test_the_check_counts_saved_replies_whose_lead_is_gone(env):
     res = env["client"].post("/inbox/check", headers=_auth()).json()
     assert res["repliesWithoutLead"] == 1  # not on Positive Leads (no lead to list it under), but reported
     _db(env, "delete from inbox_replies where gmail_message_id = 'm-gone'")
+
+
+def test_a_new_email_adds_a_row_and_the_old_one_stays(env):
+    # Tom's first email was "Sounds interesting." (Needs review). He writes again from his address, in a new thread.
+    _db(env, """insert into inbox_replies (gmail_message_id, contact_id, email_id, match_method, from_email, body,
+                                           received_at)
+                select 'm-tom-2', s.contact_id, s.email_id, 'sender', s.from_email, 'Sounds great, let''s talk.', now()
+                from inbox_replies s where s.gmail_message_id = 'm-tom'""")
+    res = _get(env, "/leads/positive")
+    toms = {g: [r for r in items if r["name"] == "Tom"] for g, items in res.items() if isinstance(items, list)}
+    assert [r["followUp"] for r in toms["review"]] == ["later"]  # the old one stays, no longer the one waiting
+    assert [r["followUp"] for r in toms["positive"]] == ["waiting"]  # the new one is added
+    new = toms["positive"][0]
+    assert new["leadId"] == toms["review"][0]["leadId"] and new["id"] != toms["review"][0]["id"]
+    detail = _get(env, f"/leads/by-reply/{new['id']}")
+    assert detail["latestReply"]["text"] == "Sounds great, let's talk." and detail["replyGroup"] == "positive"
+    assert _get(env, f"/leads/by-reply/{toms['review'][0]['id']}")["latestReply"]["text"] == "Sounds interesting."
+    assert env["client"].get("/leads/by-reply/not-a-uuid", headers=_auth()).status_code == 404
+    _db(env, "delete from inbox_replies where gmail_message_id = 'm-tom-2'")

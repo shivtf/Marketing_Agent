@@ -1,5 +1,6 @@
 'use client';
-// Page 4: Positive Leads. Each lead is judged on its latest reply written by a person (backend /leads/positive):
+// Page 4: Positive Leads. Every reply written by a person is its own row, judged on its own words (backend
+// /leads/positive): a lead's new email adds a row, and their older ones stay where they are.
 //   Positive      -> labelled interested, or a keyword score of 0.70 or more
 //   Needs review  -> a score between 0.40 and 0.70, or both a yes and a no
 //   Questions     -> asked something (scope, pricing, process) before deciding
@@ -39,15 +40,22 @@ const GROUPS = [
 
 function PositiveStatCards({ section }) {
   const { status, data, reload } = section;
-  const positive = data.positive.length;
+  // The big numbers count leads (a lead with two positive emails counts once, so the rate can't pass 100%); the line
+  // under them counts emails, which is what the group tabs count.
+  const positive = new Set(data.positive.map((l) => l.leadId)).size;
   const rate = data.repliedLeads ? `${((positive / data.repliedLeads) * 100).toFixed(1)}%` : '—';
+  const emails = GROUPS.reduce((n, g) => n + data[g.key].length, 0);
+  const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   return (
     <StatCards
       items={[
-        { label: 'Positive Leads', icon: 'check', tone: 'green', value: positive, status, onRetry: reload },
+        { label: 'Positive Leads', icon: 'check', tone: 'green', value: positive,
+          sub: count(data.positive.length, 'positive email'), status, onRetry: reload },
         // Same count as the Dashboard's Responses: every lead that replied in person, labelled or not.
-        { label: 'Leads Replied', icon: 'chat', value: data.repliedLeads, status, onRetry: reload },
-        { label: 'Positive Rate', icon: 'bolt', tone: 'lavender', value: rate, status, onRetry: reload },
+        { label: 'Leads Replied', icon: 'chat', value: data.repliedLeads, sub: count(emails, 'email'), status,
+          onRetry: reload },
+        { label: 'Positive Rate', icon: 'bolt', tone: 'lavender', value: rate, sub: 'of the leads who replied', status,
+          onRetry: reload },
       ]}
     />
   );
@@ -74,7 +82,7 @@ function GroupChips({ data, ready, group, onSelect }) {
   );
 }
 
-// Whether we have answered the lead's latest reply, and for how long they've been waiting if not.
+// Whether we have answered this reply, and for how long they've been waiting if not.
 function FollowUp({ lead }) {
   if (lead.followUp === 'replied') {
     return (
@@ -85,6 +93,8 @@ function FollowUp({ lead }) {
     );
   }
   if (lead.followUp === 'none') return <Badge text="No answer needed" tone="gray" />;
+  // An older email: the lead wrote again since, and that newer email is the one waiting for us.
+  if (lead.followUp === 'later') return <Badge text="Wrote again" tone="gray" />;
   const days = daysSince(lead.repliedAt);
   const text = days === 0 ? 'Waiting · today' : `Waiting ${days} day${days === 1 ? '' : 's'}`;
   return <Badge text={text} tone={days >= OVERDUE_DAYS ? 'red' : 'amber'} />;

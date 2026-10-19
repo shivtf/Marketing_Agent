@@ -215,20 +215,21 @@ async def lead_stats() -> dict:
     }
 
 
-# Each lead's latest reply written by a person (out-of-office and bounces are automatic, so skipped), with a person's
-# label if one was given. A lead is judged on this reply only, so a later "no" replaces an earlier "yes".
-_LATEST_HUMAN_REPLY = """
-select distinct on (s.contact_id) s.contact_id, s.id, s.email_id, s.received_at, coalesce(hl.label, s.auto_label) as label,
+# Every reply written by a person (out-of-office and bounces are automatic, so skipped), with a person's label if one
+# was given. Positive Leads lists each of them on its own: a lead's new email adds a row, its older ones stay.
+_HUMAN_REPLIES = """
+select s.contact_id, s.id, s.email_id, s.received_at, coalesce(hl.label, s.auto_label) as label,
        s.body, s.we_replied_at, hl.labelled_by, hl.labelled_at
 from inbox_replies s
 left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
 where s.contact_id is not null and coalesce(hl.label, s.auto_label, '') not in ('ooo', 'bounce')
-order by s.contact_id, s.received_at desc
 """
+# Each lead's latest one (the lead drawer opened from the Dashboard shows it).
+_LATEST_HUMAN_REPLY = f"select distinct on (contact_id) * from ({_HUMAN_REPLIES}) h order by contact_id, received_at desc"  # noqa: S608
 
 
 def _judge(label: str | None, labelled: bool, text: str) -> tuple[str | None, str | None, dict]:
-    """Where a lead's latest reply goes on Positive Leads -> (group, why it needs review, its keyword score). text is
+    """Where a reply goes on Positive Leads -> (group, why it needs review, its keyword score). text is
     what the person wrote (quoted mail removed). group is positive / review / questions / notInterested / unsubscribe,
     or None (not listed). A person's label is trusted as given; the score is still returned, to compare with it."""
     scored = score_reply(text)
@@ -262,21 +263,26 @@ def _follow_up_order(items: list[dict]) -> list[dict]:
 
 @router.get("/leads/positive")
 async def positive_leads() -> dict:
-    """Leads judged on their latest human reply, split into positive, review, questions, notInterested and unsubscribe
-    (asked to stop, or seems to) by a person's label or else the keyword score (_judge). score / scoreHits: the keyword
+    """Every reply written by a person, each on its own row (id = the reply, leadId = its lead), split into positive,
+    review, questions, notInterested and unsubscribe (asked to stop, or seems to) by a person's label or else the keyword
+    score (_judge). A lead's new email adds a row; its older ones stay where they are. score / scoreHits: the keyword
     score and the phrases behind it. followUp says whether we have answered that reply: 'replied' (a later message of
-    ours in the Gmail conversation), 'none' (a "no" that needs no answer) or 'waiting'."""
+    ours in the Gmail conversation), 'none' (a "no" that needs no answer), 'later' (the lead wrote again since: their
+    newer email is the one waiting) or 'waiting'."""
     rows = await _rows(
-        f"""select l.id, l.number, l.name, l.company, l.source, l.status,
+        f"""select r.id, l.id as lead_id, l.number, l.name, l.company, l.source, l.status,
                    r.id as reply_id, r.received_at as replied_at, r.we_replied_at as answered_at, r.label, r.body,
                    r.labelled_at
             from ({_LEADS}) l
-            join ({_LATEST_HUMAN_REPLY}) r on r.contact_id = l.id"""  # noqa: S608
+            join ({_HUMAN_REPLIES}) r on r.contact_id = l.id"""  # noqa: S608
     )
     # Same count as the dashboard's Responses: every lead with a reply written by a person, labelled or not.
     replied = await _value(f"select count(*) from ({_LEADS}) l where status = 'Responded'")  # noqa: S608
     groups: dict[str, list[dict]] = {"positive": [], "review": [], "questions": [], "notInterested": [],
                                      "unsubscribe": []}
+    latest: dict[str, str] = {}  # lead -> when they last wrote
+    for r in rows:
+        latest[r["leadId"]] = max(latest.get(r["leadId"], r["repliedAt"]), r["repliedAt"])
     for r in rows:
         body = r.pop("body")
         labelled = r.pop("labelledAt") is not None
@@ -286,7 +292,8 @@ async def positive_leads() -> dict:
         r["labelledByPerson"] = labelled
         # A "no" closes the lead: nothing is waiting on us unless someone chose to answer anyway.
         closed = group == "notInterested" or (group == "unsubscribe" and r["label"] == "unsubscribe")
-        r["followUp"] = "replied" if r["answeredAt"] else "none" if closed else "waiting"
+        r["followUp"] = ("replied" if r["answeredAt"] else "none" if closed
+                         else "later" if r["repliedAt"] < latest[r["leadId"]] else "waiting")
         if group:
             groups[group].append(r)
     return {**{k: _follow_up_order(v) for k, v in groups.items()}, "repliedLeads": replied or 0}
@@ -316,17 +323,41 @@ def _preview(body: str | None, limit: int = 100) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+@router.get("/leads/by-reply/{reply_id}")
+async def lead_by_reply(reply_id: str) -> dict:
+    """A lead with one particular reply of theirs (Positive Leads lists each reply on its own)."""
+    try:
+        reply = await (await _pg()).fetchrow(
+            "select contact_id, id, email_id, label, received_at, body, labelled_by, labelled_at "  # noqa: S608
+            f"from ({_HUMAN_REPLIES}) r where id = $1::uuid",
+            reply_id,
+        )
+    except asyncpg.DataError as exc:
+        raise HTTPException(404, "Not found") from exc
+    if reply is None:
+        raise HTTPException(404, "Not found")
+    return await _lead_detail(str(reply["contact_id"]), reply)
+
+
 @router.get("/leads/{lead_id}")
 async def lead(lead_id: str) -> dict:
+    try:
+        reply = await (await _pg()).fetchrow(
+            "select id, email_id, label, received_at, body, labelled_by, labelled_at "  # noqa: S608
+            f"from ({_LATEST_HUMAN_REPLY}) r where contact_id = $1::uuid",
+            lead_id,
+        )
+    except asyncpg.DataError as exc:
+        raise HTTPException(404, "Not found") from exc
+    return await _lead_detail(lead_id, reply)
+
+
+async def _lead_detail(lead_id: str, reply: asyncpg.Record | None) -> dict:
+    """The lead, judged on `reply` (None: they have not replied)."""
     try:
         row = await _one(f"select * from ({_LEADS}) l where id = $1::uuid", lead_id)  # noqa: S608
     except asyncpg.DataError as exc:
         raise HTTPException(404, "Not found") from exc
-    reply = await (await _pg()).fetchrow(
-        "select id, email_id, label, received_at, body, labelled_by, labelled_at "  # noqa: S608
-        f"from ({_LATEST_HUMAN_REPLY}) r where contact_id = $1::uuid",
-        lead_id,
-    )
     email = await (await _pg()).fetchrow(
         "select id from emails where contact_id = $1::uuid and sent_at is not null "
         "order by sent_at desc limit 1",
@@ -351,7 +382,7 @@ async def lead(lead_id: str) -> dict:
     row["labelledBy"] = (
         {"by": reply["labelled_by"], "at": reply["labelled_at"].isoformat()} if reply and reply["labelled_at"] else None
     )
-    # The reply the lead is judged on: what the person wrote (quoted earlier mail left out; the full thread is in
+    # The reply shown: what the person wrote (quoted earlier mail left out; the full thread is in
     # History). Falls back to the whole body when everything in it looks quoted.
     row["latestReply"] = (
         {"id": str(reply["id"]), "receivedAt": reply["received_at"].isoformat(),
