@@ -65,15 +65,6 @@ def decode_token(token: str) -> dict:
 # may take over only once the holder signed out, its Supabase session ended, or it has been quiet for HOLD_FOR
 # (a closed tab must not lock the account forever). The open dashboard checks in every minute to keep its hold.
 HOLD_FOR = "3 minutes"
-# HOLD_FOR is a constant; the values are $1/$2.
-_CLAIM = f"""
-insert into dashboard_presence as p (user_id, session_id, last_seen) values ($1::uuid, $2::uuid, now())
-on conflict (user_id) do update set session_id = excluded.session_id, last_seen = now()
-  where p.session_id = excluded.session_id
-     or p.last_seen < now() - interval '{HOLD_FOR}'
-     or not exists (select 1 from auth.sessions s where s.id = p.session_id)
-returning session_id
-"""  # noqa: S608
 IN_USE = "This account is already signed in on another device."
 # The check can't run (database unreachable, table missing): the request is refused with 503, never let through, so a
 # removed account or a second sign-in can't slip in during an outage. 503, not 401/409: the dashboard keeps the user
@@ -96,37 +87,18 @@ def forget_checks(user_id: str, session_id: str | None = None) -> None:
         _checked.pop(key, None)
 
 
-async def call_or_sql(pool, method: str, fn_sql: str, raw_sql: str, *args):
-    """The narrow function from migrations/009 (the limited login), or, while that file is not applied yet, the same query
-    straight on the tables (which only the owner login may run)."""
-    try:
-        return await getattr(pool, method)(fn_sql, *args)
-    except asyncpg.UndefinedFunctionError:
-        return await getattr(pool, method)(raw_sql, *args)
-
-
+# Supabase Auth is reached only through the narrow functions of migrations/009_dashboard_backend_role.sql (applied):
+# they run with the owner's rights and can do nothing else, so the backend's own login needs no access to auth.*.
 # Read from the database, not the token: a token issued before an admin removed the account still says "not
 # removed" until it expires (up to an hour), and the account's sessions may still exist.
-_ACCOUNT = """
-select exists (select 1 from auth.sessions s where s.id = $2::uuid and s.user_id = u.id) as session_alive,
-       coalesce((u.raw_app_meta_data->>'removed')::boolean, false)
-         or coalesce(u.banned_until > now(), false) as removed
-from auth.users u
-where u.id = $1::uuid
-"""
 
 
 async def _account(user_id: str, session_id: str) -> tuple[bool, bool]:
     """(session ended, account removed or banned) for the token's user and sign-in session."""
     from app.data import _pg  # here, not at the top: app.data imports this module
 
-    row = await call_or_sql(
-        await _pg(),
-        "fetchrow",
-        "select session_alive, removed from public.dashboard_account_state($1::uuid, $2::uuid)",
-        _ACCOUNT,
-        user_id,
-        session_id,
+    row = await (await _pg()).fetchrow(
+        "select session_alive, removed from public.dashboard_account_state($1::uuid, $2::uuid)", user_id, session_id
     )
     if row is None:  # the user no longer exists
         return True, True
@@ -137,9 +109,9 @@ async def _claim(user_id: str, session_id: str) -> bool:
     """Take or keep the account for this session; False while another session is using it."""
     from app.data import _pg
 
-    pool = await _pg()
-    fn = f"select public.dashboard_claim($1::uuid, $2::uuid, interval '{HOLD_FOR}')"
-    return await call_or_sql(pool, "fetchval", fn, _CLAIM, user_id, session_id) is not None
+    # HOLD_FOR is a constant; the values are $1/$2.
+    sql = f"select public.dashboard_claim($1::uuid, $2::uuid, interval '{HOLD_FOR}')"
+    return await (await _pg()).fetchval(sql, user_id, session_id) is not None
 
 
 async def release(user_id: str, session_id: str) -> None:
@@ -210,13 +182,7 @@ async def current_admin(user: Annotated[dict, Depends(current_user)]) -> dict:
     from app.data import _pg
 
     try:
-        role = await call_or_sql(
-            await _pg(),
-            "fetchval",
-            "select public.dashboard_user_role($1::uuid)",
-            "select raw_app_meta_data->>'role' from auth.users where id = $1::uuid",
-            user["sub"],
-        )
+        role = await (await _pg()).fetchval("select public.dashboard_user_role($1::uuid)", user["sub"])
     except Exception as exc:  # noqa: BLE001 - unlike the checks above, admin actions fail closed
         log.error("Could not read the user's role", exc_info=True)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Couldn't check your role. Try again.") from exc

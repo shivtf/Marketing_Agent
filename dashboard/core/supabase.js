@@ -8,13 +8,13 @@ const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 if (!url || !/^https?:\/\//.test(url)) {
   throw new Error(
     'NEXT_PUBLIC_SUPABASE_URL is missing or not an http(s) URL. ' +
-      'Set it in eval/dashboard/.env.local (e.g. https://<project-ref>.supabase.co) and restart `npm run dev`.',
+      'Set it in dashboard/.env.local (e.g. https://<project-ref>.supabase.co) and restart `npm run dev`.',
   );
 }
 if (!anonKey) {
   throw new Error(
     'NEXT_PUBLIC_SUPABASE_ANON_KEY is missing. ' +
-      'Set it in eval/dashboard/.env.local and restart `npm run dev`.',
+      'Set it in dashboard/.env.local and restart `npm run dev`.',
   );
 }
 

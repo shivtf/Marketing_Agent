@@ -1,9 +1,10 @@
 """Replies the dashboard reads from Gmail itself, and the labels people give replies on Positive Leads.
 
-The mail agent only sends; this backend reads every reply. POST /inbox/check reads the connected inbox (app/gmail.py,
-read only):
+The mail agent only sends; this backend reads every reply. POST /inbox/check reads the connected mailbox (app/gmail.py,
+read only): every message but our sent mail, drafts, chats, spam and trash (archived replies count), up to
+MAX_PER_CHECK new ones per check. It also runs on its own every INBOX_CHECK_EVERY_MINUTES when that is set (app/main.py).
   - our own mail and Gmail SENT messages are skipped;
-  - mailer-daemon / postmaster notices are bounces;
+  - mailer-daemon / postmaster / Exchange notices and delivery reports are bounces;
   - a message is a reply when its In-Reply-To / References name an email we sent ('header'), or it is in the Gmail
     conversation of one ('thread'), or it comes from the address of a lead we emailed ('sender': e.g. a new thread);
   - out-of-office replies are recognised by their headers and subject (app/reply_rules.py).
@@ -23,7 +24,9 @@ readable detail, never 401 / 409 (the dashboard signs the user out on those).
 
 import asyncio
 import logging
+import os
 import re
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
@@ -41,7 +44,12 @@ router = APIRouter(prefix="/inbox", dependencies=[Depends(current_user)])
 User = Annotated[dict, Depends(current_user)]
 
 LABELS = ("interested", "question", "not_interested", "unsubscribe", "ooo", "bounce")
-BATCH = 25  # new messages read per check; the rest are left for the next one
+BATCH = 25  # new messages fetched at a time
+MAX_PER_CHECK = 200  # one check reads batches until it has caught up, at most this many messages
+CHECK_SECONDS = 40  # or for this long; the rest are left for the next check
+# Every message except our own sent mail, drafts and chats. Archived or filtered replies count too. Spam and trash
+# are left out by the Gmail API itself.
+SEARCH = "-in:sent -in:drafts -in:chats"
 PAGE = 500  # Gmail's largest list page
 MAX_PAGES = 20  # message ids listed per check, at most PAGE * MAX_PAGES
 PARALLEL = 5  # messages fetched at once
@@ -97,16 +105,18 @@ async def _check() -> dict:
                 "since": None, "repliesWithoutLead": 0}
     async with gmail.client() as http:
         token = await gmail.access_token(http, conn["refresh_token"])
-        ids = await _list_ids(http, token, f"in:inbox after:{int(start.timestamp()) - 86400}")
+        ids = await _list_ids(http, token, f"{SEARCH} after:{int(start.timestamp()) - 86400}")
         known = {r["gmail_message_id"] for r in await pool.fetch(_KNOWN, ids)}
         fresh = [i for i in reversed(ids) if i not in known]  # Gmail lists newest first: read the oldest first
-        batch = fresh[:BATCH]
-        messages = await _fetch_all(http, token, batch)
-        new_replies = 0
-        for gid, msg in zip(batch, messages, strict=True):
-            outcome, stored = await _process(pool, gid, msg, conn["email"].lower())
-            new_replies += stored
-            log.info("Inbox message %s: %s", gid, outcome)
+        new_replies = processed = 0
+        deadline = time.monotonic() + CHECK_SECONDS
+        while fresh and processed < MAX_PER_CHECK and time.monotonic() < deadline:
+            batch, fresh = fresh[:BATCH], fresh[BATCH:]
+            for gid, msg in zip(batch, await _fetch_all(http, token, batch), strict=True):
+                outcome, stored = await _process(pool, gid, msg, conn["email"].lower())
+                new_replies += stored
+                log.info("Inbox message %s: %s", gid, outcome)
+            processed += len(batch)
         rechecked, found = await _recheck(pool, http, token, conn["email"].lower())
         follow_ups = await _refresh_follow_ups(pool, http, token)
         # Saved replies whose lead is gone: Positive Leads lists leads, so these are not shown; the page says so.
@@ -114,9 +124,36 @@ async def _check() -> dict:
             """select count(*) from inbox_replies s
                 where s.auto_label is null and not exists (select 1 from contacts c where c.id = s.contact_id)"""
         )
-    return {"checked": len(ids), "newReplies": new_replies + found, "processed": len(batch),
-            "remaining": len(fresh) - len(batch), "rechecked": rechecked, "followUpsChecked": follow_ups,
+    return {"checked": len(ids), "newReplies": new_replies + found, "processed": processed,
+            "remaining": len(fresh), "rechecked": rechecked, "followUpsChecked": follow_ups,
             "since": start.isoformat(), "repliesWithoutLead": without_lead or 0}
+
+
+async def check_every(minutes: float) -> None:
+    """The check on its own, every `minutes`, while this server runs (started by app/main.py when
+    INBOX_CHECK_EVERY_MINUTES is set), so replies are read even when nobody has Positive Leads open."""
+    while True:
+        await asyncio.sleep(minutes * 60)
+        try:
+            async with _lock:
+                result = await _check()
+            log.info("Scheduled inbox check: %s", {k: v for k, v in result.items() if k != "since"})
+        except asyncio.CancelledError:
+            raise
+        except gmail.GmailError as exc:
+            log.warning("Scheduled inbox check skipped: %s", exc)
+        except Exception:  # noqa: BLE001 - keep checking on the next round
+            log.error("Scheduled inbox check failed", exc_info=True)
+
+
+def check_interval() -> float | None:
+    """INBOX_CHECK_EVERY_MINUTES as a number of minutes, or None (not set, 0 or not a number): no scheduled check."""
+    try:
+        minutes = float(os.environ.get("INBOX_CHECK_EVERY_MINUTES", "").strip() or 0)
+    except ValueError:
+        log.error("INBOX_CHECK_EVERY_MINUTES is not a number; the scheduled inbox check is off")
+        return None
+    return max(minutes, 1.0) if minutes > 0 else None
 
 
 # Messages already looked at. A reply or bounce whose saved row was deleted since is not "known": it is read again.
@@ -143,7 +180,7 @@ async def _recheck(pool: asyncpg.Pool, http: httpx.AsyncClient, token: str, own:
     )]
     if not waiting:
         return 0, 0
-    recent = set(await _list_ids(http, token, f"in:inbox newer_than:{RECHECK_DAYS}d"))
+    recent = set(await _list_ids(http, token, f"{SEARCH} newer_than:{RECHECK_DAYS}d"))
     again = [g for g in waiting if g in recent][:RECHECK_PER_CHECK]
     found = 0
     for gid, msg in zip(again, await _fetch_all(http, token, again), strict=True):
@@ -216,7 +253,7 @@ async def _process(pool: asyncpg.Pool, gid: str, msg: dict | None, own: str) -> 
         await _seen(pool, gid, "own")
         return "own", False
     auto_label = None
-    if reply_rules.is_bounce(m["from_email"], m["subject"]):
+    if reply_rules.is_bounce(m["from_email"], m["subject"], m["headers"]):
         email, method = await _match(pool, m, by_sender=False)
         if not email:  # the notice usually quotes our Message-ID
             quoted = reply_rules.message_ids(m["text"])

@@ -58,7 +58,7 @@ create table contacts (
   role text, collected_at timestamptz not null default now(), last_engaged_at timestamptz);
 create table emails (
   id uuid primary key default gen_random_uuid(), contact_id uuid references contacts, mailbox text, subject text,
-  status text, sent_at timestamptz);
+  body text, status text, sent_at timestamptz);
 """
 MIGRATIONS = pathlib.Path(__file__).parent.parent / "migrations"
 

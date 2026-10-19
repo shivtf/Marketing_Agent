@@ -126,3 +126,8 @@ test('employees only get mail from lead addresses, whatever the search', () => {
   assert.deepEqual(onlyFrom(items, ['Priya@Acme.co']), [{ from: { email: 'priya@acme.co' } }]);
   assert.deepEqual(onlyFrom(items, []), []);
 });
+
+test('quoted mail (<blockquote>) becomes "> " lines, as in a plain-text reply', () => {
+  const html = '<div>No thanks.</div><blockquote>Interested in a call?<br><blockquote>older</blockquote></blockquote><p>after</p>';
+  assert.equal(htmlToText(html), 'No thanks.\n\n> Interested in a call?\n\n> > older\n\nafter');
+});

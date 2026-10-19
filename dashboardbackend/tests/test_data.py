@@ -5,7 +5,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from app import data
+from app import data, reply_rules
 from app.main import app
 
 SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
@@ -113,7 +113,8 @@ def _reply(id_, label="interested", body="Hi Alex,\n\nSounds good.\n\nThanks", a
            labelled=True, lead=None):
     """One reply as the /leads/positive query returns it (lead: its lead, by default a lead of its own).
     labelled: a person chose `label`."""
-    return {"id": id_, "leadId": lead or f"lead-{id_}", "label": label, "body": body, "repliedAt": at,
+    return {"id": id_, "leadId": lead or f"lead-{id_}", "label": label, "body": body, "sentBody": None,
+            "repliedAt": at,
             "answeredAt": answered, "labelledAt": "2026-10-02T09:00:00+00:00" if labelled else None}
 
 
@@ -157,7 +158,7 @@ def test_positive_leads_groups(positive_rows):
     assert [(r["id"], r["followUp"]) for r in res["unsubscribe"]] == [("g", "waiting"), ("f", "none")]
     assert res["repliedLeads"] == 9
     assert set(res) == {"positive", "review", "questions", "notInterested", "unsubscribe", "repliedLeads"}
-    assert all("body" not in r and "labelledAt" not in r for r in res["positive"])
+    assert all("body" not in r and "sentBody" not in r and "labelledAt" not in r for r in res["positive"])
     assert res["positive"][0]["labelledByPerson"] is True and res["review"][0]["labelledByPerson"] is False
 
 
@@ -200,9 +201,9 @@ def test_preview_drops_greeting_and_quoted_mail():
         "Hi Alex,\n\nYes, a call on Thursday works.\nSend me two time slots.\n\n"
         "On Mon, 5 Oct 2026 at 10:00, Alex <alex@agency.example> wrote:\n> Would you like a call?"
     )
-    assert data._preview(body) == "Yes, a call on Thursday works. Send me two time slots."
-    assert data._preview("> only quoted text") == ""
-    assert data._preview(None) == ""
+    assert reply_rules.preview(body) == "Yes, a call on Thursday works. Send me two time slots."
+    assert reply_rules.preview("> only quoted text") == ""
+    assert reply_rules.preview(None) == ""
 
 
 def test_concurrent_first_requests_share_one_pool(monkeypatch):
@@ -263,7 +264,7 @@ def lead_db(monkeypatch):
     import datetime as dt
 
     state = {"reply": {"id": "r1", "label": None, "email_id": "e0", "labelled_by": None, "labelled_at": None,
-                       "received_at": dt.datetime(2026, 10, 5, 9, 30, tzinfo=dt.UTC),
+                       "received_at": dt.datetime(2026, 10, 5, 9, 30, tzinfo=dt.UTC), "sent_body": None,
                        "body": "Hi Alex,\n\nYes, let's talk.\n\nOn Mon, 5 Oct 2026, Alex <a@x.co> wrote:\n> Interested?"}}
 
     async def one(*_):

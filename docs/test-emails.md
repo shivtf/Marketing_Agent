@@ -10,8 +10,9 @@ else, that is a bug.
 ## How it works, in short
 
 1. A lead emails the connected Gmail inbox.
-2. When someone opens Positive Leads (at most once every 5 minutes) or clicks **Check inbox**, the backend reads the
-   new mail and keeps only mail from leads we emailed.
+2. When someone opens Positive Leads (at most once every 5 minutes), clicks **Check inbox**, or the backend's own
+   check runs (every `INBOX_CHECK_EVERY_MINUTES`, when that is set), the backend reads the new mail (archived mail
+   too) and keeps only mail from leads we emailed. Quoted earlier mail, the signature and footers are left out.
 3. Each reply gets a score: it starts at **0.50**, and each phrase found adds or takes away points
    (strong yes **+0.25**, soft yes **+0.15**, soft no **−0.20**, strong no **−0.30**).
 4. Every reply is its own row on the page, judged on its own words. A lead's new email adds a row; their older
@@ -60,7 +61,7 @@ else, that is a bug.
 1. From **shivam714bhandari@gmail.com**, send the email to the connected Gmail (a new email is fine; it does not have
    to be a reply, and nothing has to be sent from the connected Gmail first). Do not send from the connected address
    itself: that counts as our own mail. Ready-to-copy versions: [send-test-emails.md](send-test-emails.md).
-2. Leave it in the **Inbox** (the check does not read archived mail).
+2. Inbox or archived both work (spam and trash are not read).
 3. On Positive Leads click **Check inbox**. The message should say `Checked N emails in Gmail since …: 1 new reply from
    leads.`
 4. Find **Test Lead** in the group below and check the **Why Here** column, then open the drawer and check the
@@ -127,7 +128,7 @@ The dashboard does not stop the agent's emails; an unsubscribe still has to be h
 |---|---|---|
 | A person's label wins | Send #11 (Needs review), open the drawer, choose **Interested**, Save | Moves to Positive; Why Here says "Labelled by a person"; the drawer still shows Score 0.65 and "A person's label is used instead" |
 | Remove the label | In the drawer, click **Remove** | Back to Needs review |
-| Every email stays | Send #2 (Positive), check, then send #14 (Not interested), check | Two rows for Test Lead: #2 stays in Positive (follow-up **Wrote again**), #14 is added to Not interested |
+| Every email stays | Send #2 (Positive), check, then send #14 (Not interested), check | Two rows for Test Lead: #2 stays in Positive (follow-up **Wrote again**), #14 is added to Not interested. The Positive Leads card goes down by one: a lead counts by their latest email |
 | We replied | Reply to the test lead's email from the connected Gmail, then click Check inbox | Follow-up shows **We replied** with the date |
 | Waiting | Any Positive reply we have not answered | Follow-up shows **Waiting · today**, red after 3 days |
 | Already read | Click Check inbox twice | The second check says "no new replies from leads" |
@@ -137,10 +138,11 @@ The dashboard does not stop the agent's emails; an unsubscribe still has to be h
 
 ## Known limits
 
-- Only mail in the **Inbox** is read. A reply that was archived or moved under a label is not picked up (History can
-  still show it).
+- Spam and trash are not read. Archived replies and replies under a label are.
 - A new email from a lead's address is matched only if we sent that lead an email with status `sent`.
-- Nothing runs in the background: new mail is read when Positive Leads is opened or Check inbox is clicked.
+- Without `INBOX_CHECK_EVERY_MINUTES` on the backend, new mail is read only when Positive Leads is opened or Check
+  inbox is clicked.
+- Replies in a language other than English are not scored (no keywords match): they go to Needs review.
 
 ## Clean up afterwards
 

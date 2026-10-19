@@ -2,8 +2,8 @@
 
 Ready-to-copy emails for testing Positive Leads with the test lead. Send them **in order, one at a time**, and click
 **Check inbox** on Positive Leads after each one. Every email adds its own row in its group; the earlier rows stay,
-and their follow-up changes to **Wrote again**. The top cards count leads, so Test Lead counts once however many
-emails they send.
+and their follow-up changes to **Wrote again**. The top cards count leads, judged on their latest email, so Test
+Lead counts once however many emails they send.
 
 The full explanation and more cases are in [test-emails.md](test-emails.md).
 
@@ -13,7 +13,7 @@ The full explanation and more cases are in [test-emails.md](test-emails.md).
 - **To:** the Gmail inbox connected on the History page (`shivambhandari090@gmail.com`, if it is still that one)
 - A **new email** is fine; it does not have to be a reply. You do not need to send anything from the connected Gmail
   first: the test lead's "sent" email exists in the database.
-- Leave it in the **Inbox** (not archived, not spam).
+- Inbox or archived both work (not spam or trash).
 
 Do not send from the connected Gmail: mail sent by that account counts as our own and is ignored.
 

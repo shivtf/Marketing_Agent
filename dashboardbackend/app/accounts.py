@@ -2,9 +2,10 @@
 removal) these routes end them. They live here, not in the dashboard's Next.js routes, because the Supabase client
 there can't end another user's sessions; this backend can, over its database connection.
 
-Deleting a row from auth.sessions also deletes its refresh tokens (Supabase's foreign key cascades), so the session
-can't be renewed. Its current access token stops working at once on this backend (current_user checks the session
-still exists) and on Supabase, which refuses tokens of ended sessions.
+They delete rows of auth.sessions through migrations/009's dashboard_end_sessions(). Deleting a row of auth.sessions
+also deletes its refresh tokens (Supabase's foreign key cascades), so the session can't be renewed. Its current access
+token stops working at once on this backend (current_user checks the session still exists) and on Supabase, which
+refuses tokens of ended sessions.
 """
 
 import logging
@@ -31,16 +32,13 @@ def _count(status: str) -> int:
         return 0
 
 
-async def _end(sql: str, *args, fn: str | None = None) -> int:
-    """`fn`: the same through the narrow function of migrations/009 (returns the count), used when it exists."""
+async def _end(sql: str, *args) -> int:
+    """Runs `sql`: a call of migrations/009's dashboard_end_sessions() (returns the count), or a delete."""
     try:
         pool = await _pg()
-        if fn is None:
-            return _count(await pool.execute(sql, *args))
-        try:
-            return int(await pool.fetchval(fn, *args) or 0)
-        except asyncpg.UndefinedFunctionError:
-            return _count(await pool.execute(sql, *args))
+        if sql.startswith("select "):
+            return int(await pool.fetchval(sql, *args) or 0)
+        return _count(await pool.execute(sql, *args))
     except asyncpg.PostgresError as exc:
         log.error("Could not end sessions", exc_info=True)
         raise HTTPException(503, "Couldn't sign the account out: the database refused to end its sessions.") from exc
@@ -56,10 +54,7 @@ async def end_user_sessions(user_id: str, admin: Admin) -> dict:
         raise HTTPException(404, "User not found.") from exc
     if uid == admin["sub"]:
         raise HTTPException(400, "You can't sign yourself out here.")
-    ended = await _end(
-        "delete from auth.sessions where user_id = $1::uuid", uid,
-        fn="select public.dashboard_end_sessions($1::uuid)",
-    )
+    ended = await _end("select public.dashboard_end_sessions($1::uuid)", uid)
     forget_checks(uid)  # their next request on this server is checked again (and refused) at once
     # The account is free for a new sign-in at once (the one-sign-in rule would allow it anyway: no session is left).
     await _end("delete from public.dashboard_presence where user_id = $1::uuid", uid)
@@ -72,8 +67,5 @@ async def end_other_sessions(user: User) -> dict:
     session_id = user.get("session_id")
     if not session_id:
         raise HTTPException(400, "This sign-in has no session id.")
-    ended = await _end(
-        "delete from auth.sessions where user_id = $1::uuid and id <> $2::uuid", user["sub"], session_id,
-        fn="select public.dashboard_end_sessions($1::uuid, $2::uuid)",
-    )
+    ended = await _end("select public.dashboard_end_sessions($1::uuid, $2::uuid)", user["sub"], session_id)
     return {"ended": ended}

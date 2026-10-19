@@ -14,7 +14,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from app import data, gmail, reply_rules
+from app import data, gmail, inbox, reply_rules
 from app.main import app
 
 SECRET = secrets.token_hex(32)  # signs fake test tokens only, never a real key
@@ -52,6 +52,11 @@ def test_bounce_senders():
     assert reply_rules.is_bounce("postmaster@acme.co", "Undeliverable: Hello")
     assert not reply_rules.is_bounce("mailer-daemon@googlemail.com", "Delivery Status Notification (Delay)")
     assert not reply_rules.is_bounce("priya@acme.co", "Mail delivery failed")
+    # Exchange's own sender, and any delivery report (RFC 3464), whoever sends it.
+    assert reply_rules.is_bounce("microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@acme.co", "Undeliverable: Hello")
+    report = {"content-type": 'multipart/report; report-type=delivery-status; boundary="x"'}
+    assert reply_rules.is_bounce("noreply@mail.acme.co", "Returned mail", report)
+    assert not reply_rules.is_bounce("noreply@mail.acme.co", "Delayed: Hello", report)
 
 
 @pytest.mark.parametrize("headers,subject", [
@@ -61,6 +66,9 @@ def test_bounce_senders():
     ({}, "Out of Office: back on Monday"),
     ({}, "Automatic reply: Hello"),
     ({}, "Abwesenheit"),
+    ({}, "Absence: back on Monday"),
+    ({}, "Abwesenheitsnotiz: Hello"),
+    ({}, "Re: Hello [Out of Office]"),
 ])
 def test_automatic_replies(headers, subject):
     assert reply_rules.is_auto_reply(headers, subject)
@@ -69,6 +77,10 @@ def test_automatic_replies(headers, subject):
 def test_a_person_is_not_an_automatic_reply():
     assert not reply_rules.is_auto_reply({"auto-submitted": "no"}, "Re: Hello")
     assert not reply_rules.is_auto_reply({}, "Re: Your offer")
+    # Words a person may use in a subject too.
+    assert not reply_rules.is_auto_reply({}, "Re: absence of a plan")
+    assert not reply_rules.is_auto_reply({}, "Re: our team on leave policies")
+    assert not reply_rules.is_auto_reply({}, "Re: vacation rentals on vacation sites")
 
 
 @pytest.mark.parametrize("text", [
@@ -249,3 +261,74 @@ def test_inbox_routes_before_the_migration(monkeypatch):
 ])
 def test_label_checks_its_input(body):
     assert client.post("/inbox/label", headers=_auth(), json=body).status_code == 422
+
+
+# ---------- One check reads batches until it has caught up ----------
+
+
+def _fake_check(monkeypatch, n):
+    from datetime import UTC, datetime
+
+    class Pool:
+        async def fetchval(self, sql, *_):
+            return datetime(2026, 10, 1, tzinfo=UTC) if "min(sent_at)" in sql else 0
+
+        async def fetch(self, sql, *_):
+            return []  # nothing seen yet
+
+    async def pg():
+        return Pool()
+
+    async def connection(_pool):
+        return {"email": "us@us.test", "refresh_token": "sealed"}
+
+    async def token(*_):
+        return "at"
+
+    async def list_ids(_http, _token, query):
+        return [f"m{i}" for i in range(n)]
+
+    async def fetch_all(_http, _token, ids):
+        return [{} for _ in ids]
+
+    async def process(*_):
+        return "not_reply", False
+
+    async def nothing(*_):
+        return 0, 0
+
+    async def no_threads(*_):
+        return 0
+
+    monkeypatch.setattr(inbox.data, "_pg", pg)
+    monkeypatch.setattr(inbox, "_connection", connection)
+    monkeypatch.setattr(inbox.gmail, "access_token", token)
+    monkeypatch.setattr(inbox, "_list_ids", list_ids)
+    monkeypatch.setattr(inbox, "_fetch_all", fetch_all)
+    monkeypatch.setattr(inbox, "_process", process)
+    monkeypatch.setattr(inbox, "_recheck", nothing)
+    monkeypatch.setattr(inbox, "_refresh_follow_ups", no_threads)
+    return asyncio.run(inbox._check())
+
+
+def test_a_check_reads_batches_until_it_has_caught_up(monkeypatch):
+    res = _fake_check(monkeypatch, 260)
+    assert (res["processed"], res["remaining"]) == (inbox.MAX_PER_CHECK, 260 - inbox.MAX_PER_CHECK)
+    res = _fake_check(monkeypatch, 30)
+    assert (res["processed"], res["remaining"]) == (30, 0)
+
+
+def test_a_check_stops_when_its_time_is_up(monkeypatch):
+    monkeypatch.setattr(inbox, "CHECK_SECONDS", 0)
+    res = _fake_check(monkeypatch, 30)
+    assert (res["processed"], res["remaining"]) == (0, 30)
+
+
+@pytest.mark.parametrize(("value", "minutes"), [(None, None), ("", None), ("0", None), ("abc", None), ("0.2", 1.0),
+                                                ("5", 5.0)])
+def test_scheduled_check_interval(monkeypatch, value, minutes):
+    if value is None:
+        monkeypatch.delenv("INBOX_CHECK_EVERY_MINUTES", raising=False)
+    else:
+        monkeypatch.setenv("INBOX_CHECK_EVERY_MINUTES", value)
+    assert inbox.check_interval() == minutes

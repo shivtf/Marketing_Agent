@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from app import accounts, data
 from app.main import app
 
-_FUNCTIONS = ("dashboard_account_state(", "dashboard_claim(", "dashboard_user_role(", "dashboard_end_sessions(")
 SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
 client = TestClient(app)
 ADMIN = "11111111-1111-4111-8111-111111111111"
@@ -31,21 +30,26 @@ def _auth(sub=ADMIN, **extra):
 
 @pytest.fixture
 def db(monkeypatch):
-    """Fake database: `role` = the caller's role in auth.users; records every delete; `refuse` = permission denied."""
+    """Fake database with migrations/009: `role` = the caller's role (dashboard_user_role); records every call that ends
+    sessions or frees the account; `refuse` = permission denied."""
     state = {"role": "admin", "deletes": [], "refuse": False}
 
     class Pool:
-        async def fetchval(self, sql, *_):
-            if any(f in sql for f in _FUNCTIONS):  # a database without migrations/009
-                raise asyncpg.UndefinedFunctionError(f"function does not exist: {sql[:40]}")
-            assert "raw_app_meta_data->>'role'" in sql
-            return state["role"]
+        async def fetchval(self, sql, *args):
+            if "dashboard_user_role(" in sql:
+                return state["role"]
+            assert "dashboard_end_sessions(" in sql
+            if state["refuse"]:
+                raise asyncpg.InsufficientPrivilegeError("permission denied for function dashboard_end_sessions")
+            state["deletes"].append((sql, args))
+            return 2
 
         async def execute(self, sql, *args):
             if state["refuse"]:
                 raise asyncpg.InsufficientPrivilegeError("permission denied for table sessions")
+            assert "auth." not in sql  # Supabase Auth only through the functions
             state["deletes"].append((sql, args))
-            return "DELETE 2" if "auth.sessions" in sql else "DELETE 1"
+            return "DELETE 1"
 
     async def pg():
         return Pool()
@@ -59,7 +63,7 @@ def test_admin_ends_every_session_of_a_user(db):
     res = client.post(f"/admin/users/{OTHER}/end-sessions", headers=_auth())
     assert res.status_code == 200 and res.json() == {"ended": 2}
     (sessions_sql, args), (presence_sql, _) = db["deletes"]
-    assert sessions_sql == "delete from auth.sessions where user_id = $1::uuid" and args == (OTHER,)
+    assert sessions_sql == "select public.dashboard_end_sessions($1::uuid)" and args == (OTHER,)
     assert "dashboard_presence" in presence_sql
 
 
@@ -94,7 +98,7 @@ def test_end_other_sessions_keeps_this_one(db, monkeypatch):
     res = client.post("/auth/end-other-sessions", headers=_auth(OTHER, session_id=SESSION))
     assert res.json() == {"ended": 2}
     ((sql, args),) = db["deletes"]
-    assert "id <> $2::uuid" in sql and args == (OTHER, SESSION)
+    assert sql == "select public.dashboard_end_sessions($1::uuid, $2::uuid)" and args == (OTHER, SESSION)
 
 
 def test_routes_need_login():
