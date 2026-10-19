@@ -1,5 +1,5 @@
 'use client';
-// Page 1, laid out like the design mock: a greeting; lead stat cards, the Lead Pipeline and Recent Leads on the left;
+// Page 1: a greeting; the Lead Pipeline and Recent Leads on the left;
 // Agent Control and Leads by Source on the right. Everything shown comes from /api/ca, /leads/stats and /leads.
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
@@ -49,42 +49,6 @@ function Greeting() {
         </svg>
         <p className="hero-quote">“Find opportunities<br />Build relationships<br />Create impact.”</p>
       </div>
-    </div>
-  );
-}
-
-// ---------- Stat cards ----------
-// Counts are leads, not emails: "Leads Emailed" is leads emailed at least once (follow-ups don't add to it).
-// Percentages use the same base as the Lead Pipeline: emailed is a share of all leads, replies a share of emailed.
-const KPIS = [
-  { label: 'Total Leads', icon: 'building', tone: 'blue', value: (d) => d.total, hint: () => 'All leads found' },
-  { label: 'Leads Emailed', icon: 'mail', tone: 'red', value: (d, sent) => sent, hint: (d, sent) => `${pct(sent, d.total)}% of leads` },
-  { label: 'Awaiting Reply', icon: 'clock', tone: 'green', value: (d) => d.awaiting, hint: (d, sent) => `${pct(d.awaiting, sent)}% of emailed` },
-  { label: 'Responses', icon: 'reply', tone: 'lavender', value: (d) => d.responded, hint: (d, sent) => `${pct(d.responded, sent)}% of emailed` },
-];
-
-function StatRow({ stats }) {
-  const { status, data, reload } = stats;
-  // Every lead we emailed: sent, responded or bounced (not the ones not emailed yet, nor companies with no contact).
-  const sent = data ? data.total - data.notSent - (data.noContact ?? 0) : 0;
-  return (
-    <div className="kpis">
-      {KPIS.map((k) => (
-        <div key={k.label} className="card kpi">
-          <div className={`kpi-tile ${k.tone}`}><Icon name={k.icon} /></div>
-          <div className="kpi-body">
-            <div className="kpi-label">{k.label}</div>
-            {status === 'error' && <button className="btn small-btn" onClick={reload}>Retry</button>}
-            {status === 'loading' && <div className="skel" style={{ height: 30, width: 70, marginTop: 6 }} />}
-            {status === 'ready' && (
-              <>
-                <div className="kpi-value">{k.value(data, sent)}</div>
-                <div className={`kpi-hint ${k.tone}`}>{k.hint(data, sent)}</div>
-              </>
-            )}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
@@ -292,7 +256,6 @@ export default function DashboardView() {
       <Greeting />
       <div className="dash-grid">
         <div className="dash-main">
-          <StatRow stats={stats} />
           <Pipeline stats={stats} />
           <RecentLeads />
         </div>
