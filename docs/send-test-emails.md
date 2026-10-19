@@ -2,8 +2,8 @@
 
 Ready-to-copy emails for testing Positive Leads with the test lead. Send them **in order, one at a time**, and click
 **Check inbox** on Positive Leads after each one. Every email adds its own row in its group; the earlier rows stay,
-and their follow-up changes to **Wrote again**. The top cards count leads, judged on their latest email, so Test
-Lead counts once however many emails they send.
+and their follow-up changes to **Wrote again**. The top cards count leads, so Test Lead counts once however many
+emails they send. They count as positive after a positive email until they say no (Not interested or Unsubscribe).
 
 The full explanation and more cases are in [test-emails.md](test-emails.md).
 

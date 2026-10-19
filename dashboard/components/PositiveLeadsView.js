@@ -40,22 +40,22 @@ const GROUPS = [
 
 function PositiveStatCards({ section }) {
   const { status, data, reload } = section;
-  // The big numbers count leads, each judged on its latest email (a lead who said yes and later no is not positive any
-  // more, and the rate can't pass 100%); the line under them counts emails, which is what the group tabs count.
-  const latest = new Map(); // lead -> { at, group } of their newest email
-  for (const g of GROUPS) {
-    for (const l of data[g.key]) {
-      if (!latest.has(l.leadId) || l.repliedAt > latest.get(l.leadId).at) latest.set(l.leadId, { at: l.repliedAt, group: g.key });
-    }
+  // The big numbers count leads (so the rate can't pass 100%); the line under them counts emails, which is what the
+  // group tabs count. A lead is positive when they sent a positive email and have not said no since: a later question
+  // or unclear email keeps them positive, a later "not interested" or "unsubscribe" does not.
+  const lastYes = new Map(); // lead -> when they last wrote a positive email
+  const lastNo = new Map(); // lead -> when they last said no or asked to stop
+  for (const [key, seen] of [['positive', lastYes], ['notInterested', lastNo], ['unsubscribe', lastNo]]) {
+    for (const l of data[key]) if (!(seen.get(l.leadId) >= l.repliedAt)) seen.set(l.leadId, l.repliedAt);
   }
-  const positive = [...latest.values()].filter((l) => l.group === 'positive').length;
+  const positive = [...lastYes].filter(([lead, at]) => !(lastNo.get(lead) > at)).length;
   const rate = data.repliedLeads ? `${((positive / data.repliedLeads) * 100).toFixed(1)}%` : '—';
   const emails = GROUPS.reduce((n, g) => n + data[g.key].length, 0);
   const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   return (
     <StatCards
       items={[
-        // Leads whose latest email is positive.
+        // Leads with a positive email and no "no" since.
         { label: 'Positive Leads', icon: 'check', tone: 'green', value: positive,
           sub: count(data.positive.length, 'positive email'), status, onRetry: reload },
         // Same count as the Dashboard's Responses: every lead that replied in person, labelled or not.
