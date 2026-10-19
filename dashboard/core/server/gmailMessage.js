@@ -22,17 +22,35 @@ const entity = (m, e) => {
   return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : '';
 };
 
-// Mail HTML -> plain text. The page never renders mail HTML, so a message can't run scripts or load trackers there.
+// Quoted mail (<blockquote>, marked \x01 ... \x02 below) -> "> " lines, as in a plain-text reply.
+function quoteLines(text) {
+  let depth = 0;
+  const out = [];
+  for (const line of text.split('\n')) {
+    if (line.trim() === '\x01' || line.trim() === '\x02') {
+      depth = line.trim() === '\x01' ? depth + 1 : Math.max(0, depth - 1);
+      continue;
+    }
+    out.push(depth && line.trim() ? '> '.repeat(depth) + line : line);
+  }
+  return out.join('\n');
+}
+
+// Mail HTML -> plain text (same rules as the backend's gmail.py html_to_text). The page never renders mail HTML, so a
+// message can't run scripts or load trackers there.
 export function htmlToText(html) {
-  return String(html || '')
+  const text = String(html || '')
     .replace(/<(script|style|head|title)\b[\s\S]*?<\/\1\s*>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|tr|table|blockquote)\s*>/gi, '\n\n')
+    .replace(/<blockquote\b[^>]*>/gi, '\n\x01\n')
+    .replace(/<\/blockquote\s*>/gi, '\n\x02\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|table)\s*>/gi, '\n\n')
     .replace(/<li\b[^>]*>/gi, '- ')
     .replace(/<[^>]+>/g, '')
     .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, entity)
-    .replace(/ /g, ' ')
+    .replace(/ /g, ' ');
+  return quoteLines(text)
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

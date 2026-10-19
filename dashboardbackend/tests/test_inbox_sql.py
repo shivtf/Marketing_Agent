@@ -1,7 +1,7 @@
 """The inbox check and Positive Leads against a REAL Postgres, with Gmail faked. Nothing here touches Supabase or Google.
 
 The database gets a minimal copy of the mail agent's tables plus this project's own migrations 006 and 007, run from
-their files. The agent only sends, so every reply here is one the backend read from Gmail. Gmail is an httpx.MockTransport serving the made-up inbox below. Every lead and message is fake.
+their files (and the indexes of 008). The agent only sends, so every reply here is one the backend read from Gmail. Gmail is an httpx.MockTransport serving the made-up inbox below. Every lead and message is fake.
 
     Lead          Our email                   In the inbox                                   Expected
     ------------  --------------------------  ---------------------------------------------  -----------------------------
@@ -93,7 +93,10 @@ INBOX = [
     _mail("m-own", "thread-x", f"Us <{OWN}>", "A note to self", 0.5),
     _mail("m-stranger", "thread-y", "x@elsewhere.test", "Buy our widgets", 0.6),
     _mail("m-dana", "thread-d", "dana@lead.test", "What would it cost?", 0.7, In_Reply_To="<s-dana@us.test>"),
-    _mail("m-ann", "thread-n", "ann@lead.test", "Yes please", 0.8, In_Reply_To="<s-ann@us.test>"),
+    # Archived (no INBOX label): still read.
+    _mail("m-ann", "thread-n", "ann@lead.test", "Yes please", 0.8, labels=("IMPORTANT",), In_Reply_To="<s-ann@us.test>"),
+    # Our own sent mail: never even fetched (the search leaves it out).
+    _mail("m-sent", "thread-a", f"Us <{OWN}>", "Thanks Priya", 0.85, labels=("SENT",)),
     _mail("m-ben", "thread-z", "mailer-daemon@googlemail.com", "Undeliverable. Original: <s-ben@us.test>", 0.9,
           subject="Delivery Status Notification (Failure)"),
     _mail("m-uma", "thread-u", "uma@lead.test", "Please remove me from your list.", 1, In_Reply_To="<s-uma@us.test>"),
@@ -110,6 +113,19 @@ THREADS = {  # thread-a: our answer to Priya, two days after her reply
 }
 
 
+# The Gmail search terms the backend uses, applied like Gmail does (dates are left out: every message is recent).
+_IN = {"inbox": "INBOX", "sent": "SENT", "drafts": "DRAFT", "chats": "CHAT"}
+
+
+def _matches(msg, query):
+    for term in query.split():
+        neg, term = term.startswith("-"), term.lstrip("-")
+        if term.startswith("in:"):
+            if (_IN[term[3:]] in msg["labelIds"]) == neg:
+                return False
+    return True
+
+
 class FakeGmail:
     def __init__(self):
         self.fetched: list[str] = []
@@ -123,8 +139,9 @@ class FakeGmail:
         assert req.method == "GET", "only GET calls may reach Gmail"
         path = req.url.path.removeprefix("/gmail/v1/users/me")
         if path == "/messages":
-            self.queries.append(req.url.params["q"])
-            return httpx.Response(200, json={"messages": [{"id": m["id"]} for m in INBOX]})
+            q = req.url.params["q"]
+            self.queries.append(q)
+            return httpx.Response(200, json={"messages": [{"id": m["id"]} for m in INBOX if _matches(m, q)]})
         if path.startswith("/messages/"):
             gid = path.rsplit("/", 1)[1]
             self.fetched.append(gid)
@@ -141,6 +158,8 @@ async def _seed(dsn):
         await conn.execute((MIGRATIONS / "006_gmail_connection.sql").read_text())
         await conn.execute((MIGRATIONS / "007_inbox_replies.sql").read_text())
         await conn.execute((MIGRATIONS / "007_inbox_replies.sql").read_text())  # safe to run twice
+        await conn.execute((MIGRATIONS / "008_inbox_indexes.sql").read_text())
+        await conn.execute((MIGRATIONS / "008_inbox_indexes.sql").read_text())  # safe to run twice
         await conn.execute("insert into gmail_connection (email, refresh_token) values ($1, $2)", OWN, SEALED)
         for name, (msgid, thread, status) in LEADS.items():
             company = await conn.fetchval(
@@ -213,7 +232,8 @@ def test_the_check_reads_each_message_once(env):
         "repliesWithoutLead": 0}
     assert body["since"].startswith(_db(env, "select min(sent_at)::date::text as d from emails")[0]["d"])
     assert len(env["gmail"].fetched) == 11 and env["gmail"].fetched[0] == "m-priya"
-    assert env["gmail"].queries[0].startswith("in:inbox after:")
+    assert env["gmail"].queries[0].startswith("-in:sent -in:drafts -in:chats after:")
+    assert "m-sent" not in env["gmail"].fetched
     outcomes = {r["gmail_message_id"]: r["outcome"] for r in _db(env, "select * from inbox_seen")}
     assert outcomes == {"m-leo": "not_reply", "m-own": "own", "m-stranger": "not_reply", "m-dana": "reply", "m-ann": "reply",
                         "m-ben": "bounce", "m-uma": "reply", "m-olga": "reply", "m-sam": "reply", "m-tom": "reply",
@@ -333,6 +353,9 @@ def test_a_sent_email_links_to_the_reply_read_from_gmail(env):
     priya_reply = _db(env, "select id from inbox_replies where gmail_message_id = 'm-priya'")[0]["id"]
     assert sent["priya@lead.test"]["replyId"] == str(priya_reply)
     assert sent["sam@lead.test"]["replyId"] is None  # matched by sender only: not proof it answers this email
+    # Ben's email bounced (the notice was read from Gmail): Failed here too, as his lead says Bounced.
+    assert sent["ben@lead.test"]["deliveryStatus"] == "Failed" and sent["priya@lead.test"]["deliveryStatus"] == "Sent"
+    assert _get(env, "/emails/sent?limit=200")["failed"] == 1
     assert _get(env, f"/emails/sent/{sent['priya@lead.test']['id']}")["replyId"] == str(priya_reply)
 
 
@@ -374,3 +397,17 @@ def test_a_new_email_adds_a_row_and_the_old_one_stays(env):
     assert _get(env, f"/leads/by-reply/{toms['review'][0]['id']}")["latestReply"]["text"] == "Sounds interesting."
     assert env["client"].get("/leads/by-reply/not-a-uuid", headers=_auth()).status_code == 404
     _db(env, "delete from inbox_replies where gmail_message_id = 'm-tom-2'")
+
+
+def test_a_colleagues_reply_shows_who_wrote_it(env):
+    # Raj, Priya's colleague, answers in her conversation: it is her lead's reply, written by Raj.
+    _db(env, """insert into inbox_replies (gmail_message_id, gmail_thread_id, contact_id, email_id, match_method,
+                                           from_email, body, received_at)
+                select 'm-raj', 'thread-a', s.contact_id, s.email_id, 'thread', 'raj@lead.test', 'Yes, let''s talk.', now()
+                from inbox_replies s where s.gmail_message_id = 'm-priya'""")
+    raj = _db(env, "select id from inbox_replies where gmail_message_id = 'm-raj'")[0]["id"]
+    reply = _get(env, f"/emails/replies/{raj}")
+    assert (reply["senderName"], reply["senderEmail"]) == ("raj@lead.test", "raj@lead.test")
+    priya = _db(env, "select id from inbox_replies where gmail_message_id = 'm-priya'")[0]["id"]
+    assert _get(env, f"/emails/replies/{priya}")["senderName"] == "Priya"  # the lead herself: her name
+    _db(env, "delete from inbox_replies where gmail_message_id = 'm-raj'")

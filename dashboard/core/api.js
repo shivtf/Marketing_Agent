@@ -1,7 +1,7 @@
 // All data access lives here. Everything comes from the backend (dashboardbackend/app).
 import { authFetch, endSession, getSession, NO_ACCESS } from './auth';
 
-// ---------- Backend (eval/dashboardbackend) ----------
+// ---------- Backend (dashboardbackend) ----------
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 export class ApiError extends Error {
@@ -66,14 +66,16 @@ export const getLeadStats = () => apiFetch('/leads/stats');
 export const getLead = (id) => apiFetch(`/leads/${encodeURIComponent(id)}`);
 // A lead with one particular reply of theirs (Positive Leads lists every reply on its own row).
 export const getLeadByReply = (replyId) => apiFetch(`/leads/by-reply/${encodeURIComponent(replyId)}`);
-// -> { positive, review, questions, notInterested, unsubscribe, repliedLeads }: leads judged on their latest human reply.
-// notInterested defaults to empty so a backend deployed before that group still loads.
-// An older backend returns a plain list; fail cleanly (the page shows "Couldn't load" + Retry) instead of crashing.
+// -> { positive, review, questions, notInterested, unsubscribe, repliedLeads }: every reply written by a person, each on
+// its own row, in its group. A response of another shape (a backend not yet updated: deploy the backend first) fails
+// cleanly (the page shows "Couldn't load" + Retry) instead of crashing.
+const POSITIVE_GROUPS = ['positive', 'review', 'questions', 'notInterested', 'unsubscribe'];
 export async function getPositiveLeads() {
   const data = await apiFetch('/leads/positive');
-  const ok = data && ['positive', 'review', 'questions'].every((k) => Array.isArray(data[k]));
-  if (!ok) throw new ApiError('Unexpected response from /leads/positive. Is the backend up to date?', 200);
-  return { notInterested: [], unsubscribe: [], ...data };
+  if (!data || !POSITIVE_GROUPS.every((k) => Array.isArray(data[k]))) {
+    throw new ApiError('Unexpected response from /leads/positive. Is the backend up to date?', 200);
+  }
+  return data;
 }
 
 // Reads new replies from the connected Gmail inbox (read only; backend app/inbox.py)

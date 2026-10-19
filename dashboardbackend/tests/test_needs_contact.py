@@ -66,7 +66,7 @@ def test_list_is_a_page_of_waiting_companies_strongest_first(monkeypatch):
     assert res["total"] == 1 and res["limit"] == 20
     assert res["items"][0]["company"] == "Acme" and res["items"][0]["formUrl"] is None
     sql, args = calls[0]
-    assert "lead_status = 'NEEDS_CONTACT'" in sql and "order by score desc" in sql and args == (20, 0)
+    assert "lead_status = 'NEEDS_CONTACT'" in sql and "order by score desc nulls last" in sql and args == (20, 0)
 
 
 def test_adding_an_email_calls_the_sql_function_with_who_did_it(pool):

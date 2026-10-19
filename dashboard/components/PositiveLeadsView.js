@@ -40,15 +40,22 @@ const GROUPS = [
 
 function PositiveStatCards({ section }) {
   const { status, data, reload } = section;
-  // The big numbers count leads (a lead with two positive emails counts once, so the rate can't pass 100%); the line
-  // under them counts emails, which is what the group tabs count.
-  const positive = new Set(data.positive.map((l) => l.leadId)).size;
+  // The big numbers count leads, each judged on its latest email (a lead who said yes and later no is not positive any
+  // more, and the rate can't pass 100%); the line under them counts emails, which is what the group tabs count.
+  const latest = new Map(); // lead -> { at, group } of their newest email
+  for (const g of GROUPS) {
+    for (const l of data[g.key]) {
+      if (!latest.has(l.leadId) || l.repliedAt > latest.get(l.leadId).at) latest.set(l.leadId, { at: l.repliedAt, group: g.key });
+    }
+  }
+  const positive = [...latest.values()].filter((l) => l.group === 'positive').length;
   const rate = data.repliedLeads ? `${((positive / data.repliedLeads) * 100).toFixed(1)}%` : '—';
   const emails = GROUPS.reduce((n, g) => n + data[g.key].length, 0);
   const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   return (
     <StatCards
       items={[
+        // Leads whose latest email is positive.
         { label: 'Positive Leads', icon: 'check', tone: 'green', value: positive,
           sub: count(data.positive.length, 'positive email'), status, onRetry: reload },
         // Same count as the Dashboard's Responses: every lead that replied in person, labelled or not.
@@ -94,7 +101,9 @@ function FollowUp({ lead }) {
   }
   if (lead.followUp === 'none') return <Badge text="No answer needed" tone="gray" />;
   // An older email: the lead wrote again since, and that newer email is the one waiting for us.
-  if (lead.followUp === 'later') return <Badge text="Wrote again" tone="gray" />;
+  if (lead.followUp === 'later') {
+    return <Badge text="Wrote again" tone="gray" title="They wrote again later: their newer email is the one waiting for an answer." />;
+  }
   const days = daysSince(lead.repliedAt);
   const text = days === 0 ? 'Waiting · today' : `Waiting ${days} day${days === 1 ? '' : 's'}`;
   return <Badge text={text} tone={days >= OVERDUE_DAYS ? 'red' : 'amber'} />;
@@ -106,7 +115,6 @@ function WhyHere({ lead }) {
     const text = REPLY_LABELS[lead.label];
     return <><Badge text={text} tone={toneOf(text)} /><div className="muted small">Labelled by a person</div></>;
   }
-  if (lead.score == null) return <Badge text="Not labelled" tone="gray" />; // a backend from before the score
   const note = lead.reviewReason || (lead.scoreHits?.length ? scoreHitsText(lead.scoreHits) : 'No keywords matched');
   return (
     <>

@@ -9,20 +9,25 @@ verdict: anything unclear lands in Needs review, and a person's label always win
 
 import re
 
-# Same senders as the mail agent's bounce check (agent/inbox.py): "delayed" notices are not bounces.
-_BOUNCE_SENDERS = ("mailer-daemon@", "postmaster@")
+# Mail systems' own senders (Exchange's carries a number: microsoftexchange329e...@): "delayed" notices are not bounces.
+_BOUNCE_SENDERS = ("mailer-daemon@", "postmaster@", "microsoftexchange")
 
 # RFC 3834 and the headers common mail servers add to automatic replies.
 _AUTO_HEADERS = ("x-autoreply", "x-autorespond", "x-autoresponder")
+# Words only an automatic reply uses, anywhere in the subject; and words a person may use too ("Re: absence of a plan"),
+# which count only at the start ("Absence: back on Monday").
 _AUTO_SUBJECT = re.compile(
-    r"\b(out of (the )?office|automatic reply|auto[- ]?reply|autoreply|away from (the )?office|on (annual )?leave|"
-    r"on vacation|abwesenheit|absence)\b",
+    r"\b(out of (the )?office|automatic reply|auto[- ]?reply|autoreply|abwesenheitsnotiz|réponse automatique|"
+    r"respuesta automática)\b"
+    r"|^\s*(away from (the )?office|on (annual )?leave|on vacation|abwesenheit|absence|auto)\s*(:|$)",
     re.IGNORECASE,
 )
 
-# Asks to stop. Kept narrow: "not interested" alone is a refusal, not an unsubscribe request.
+# Asks to stop. Kept narrow: "not interested" alone is a refusal, not an unsubscribe request, and "remove me from this
+# thread" only asks to be left out of one conversation.
 _UNSUBSCRIBE = re.compile(
-    r"\b(unsubscribe|opt[- ]?out|remove (me|us|my (email|address))|take (me|us) off|"
+    r"\b(unsubscribe|opt[- ]?out|remove (me|us|my (email|address))(?! from (this|the) (thread|conversation|chain|cc|loop))|"
+    r"take (me|us) off(?! (this|the) (thread|conversation|chain|cc|loop))|"
     r"(stop|quit|cease) (emailing|contacting|sending|messaging|writing)|"
     r"(do not|don'?t|never) (email|contact|write to|message) (me|us)( again)?)\b",
     re.IGNORECASE,
@@ -31,9 +36,10 @@ _UNSUBSCRIBE = re.compile(
 MESSAGE_ID = re.compile(r"<[^<>\s]+@[^<>\s]+>")
 
 
-def is_bounce(sender: str, subject: str) -> bool:
-    """A permanent delivery-failure notice from a mail system."""
-    return sender.startswith(_BOUNCE_SENDERS) and "delay" not in (subject or "").lower()
+def is_bounce(sender: str, subject: str, headers: dict[str, str] | None = None) -> bool:
+    """A permanent delivery-failure notice from a mail system: from its sender, or a delivery report (RFC 3464)."""
+    report = "report-type=delivery-status" in (headers or {}).get("content-type", "").lower()
+    return (sender.startswith(_BOUNCE_SENDERS) or report) and "delay" not in (subject or "").lower()
 
 
 def is_auto_reply(headers: dict[str, str], subject: str) -> bool:
@@ -50,6 +56,58 @@ def is_auto_reply(headers: dict[str, str], subject: str) -> bool:
 
 def mentions_unsubscribe(text: str | None) -> bool:
     return bool(_UNSUBSCRIBE.search(text or ""))
+
+
+# ---------- What the person wrote ----------
+# A reply carries our quoted email, a signature and footers; only what the person wrote is scored. Our own email ends in
+# "Unsubscribe: <link>", so a quote left in would look like an unsubscribe request.
+
+# Where the quoted earlier mail starts. "On ... wrote:" may be wrapped over two lines, or written in another language.
+_QUOTE_START = re.compile(r"^(-{2,}\s*original message|_{10,}\s*$|-{5,}\s*forwarded message)", re.IGNORECASE)
+_WROTE = re.compile(r"\b(wrote|schrieb|a écrit|escribió|ha scritto|schreef|skrev|napisał|escreveu|kirjoitti)\b.*:\s*$",
+                    re.IGNORECASE)
+_WROTE_START = re.compile(r"^(on|am|le|el|il|op|den|w dniu|em|on \w+day)\b", re.IGNORECASE)
+# Outlook's header block: "From: ..." followed by "Sent:" / "Date:" (the address is often only a name).
+_HEADER = re.compile(r"^\*?(from|von|de|van|da)\s*:\*?\s", re.IGNORECASE)
+_HEADER_NEXT = re.compile(r"^\*?(sent|date|gesendet|datum|envoyé|enviado|to|an|à|para)\s*:\*?\s", re.IGNORECASE)
+# The end of what the person wrote: the signature delimiter, "Sent from my iPhone".
+_SIGNATURE = re.compile(r"^(--\s*|sent from my .{1,40}|get outlook for .{1,20})$", re.IGNORECASE)
+# Mailing-list footers (ours, or their company's): never a request from the person.
+_FOOTER = re.compile(r"^(unsubscribe\s*:|to unsubscribe\b|click here to unsubscribe|if you (would like|wish|want|no "
+                     r"longer wish) to (unsubscribe|stop receiving))", re.IGNORECASE)
+_GREETING = re.compile(r"^(hi|hello|hey|dear|good (morning|afternoon|evening))\b.{0,40}$", re.IGNORECASE)
+
+
+def _norm(line: str) -> str:
+    return " ".join(line.lstrip("> ").split()).lower()
+
+
+def strip_quoted(body: str | None, ours: str | None = None) -> str:
+    """What the person wrote: stops at quoted earlier mail or their signature, and leaves out quoted lines ("> "),
+    footers and any line copied from `ours` (the email of ours they answer)."""
+    lines = (body or "").splitlines()
+    sent = {_norm(x) for x in (ours or "").splitlines() if len(_norm(x)) >= 15}
+    kept: list[str] = []
+    for i, line in enumerate(lines):
+        s = line.strip()
+        nxt = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        if (_QUOTE_START.match(s) or _SIGNATURE.match(s)
+                or (_WROTE_START.match(s) and (_WROTE.search(s) or _WROTE.search(f"{s} {nxt}")))
+                or (_HEADER.match(s) and _HEADER_NEXT.match(nxt))):
+            break
+        if s.startswith(">") or _FOOTER.match(s) or _norm(s) in sent:
+            continue
+        kept.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+
+def preview(body: str | None, ours: str | None = None, limit: int = 100) -> str:
+    """What the person wrote, without the greeting line, on one line."""
+    parts = [p.strip() for p in strip_quoted(body, ours).split("\n\n") if p.strip()]
+    if len(parts) > 1 and _GREETING.match(parts[0]):
+        parts = parts[1:]
+    text = " ".join(" ".join(parts).split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def message_ids(*values: str | None) -> list[str]:
@@ -83,7 +141,7 @@ SOFT_YES = 0.15
 
 _PHRASES: list[tuple[float, str]] = [
     # A clear no.
-    (STRONG_NO, rf"{_NOT}( \w+){{0,2}} interested"),
+    (STRONG_NO, rf"{_NOT}( [\w']+){{0,3}} interested"),
     (STRONG_NO, r"no interest"),
     (STRONG_NO, r"no,? thank(s| you)"),
     (STRONG_NO, r"(we're|we are|i'm|i am) (all set|good for now|covered)"),
@@ -92,7 +150,7 @@ _PHRASES: list[tuple[float, str]] = [
     (STRONG_NO, r"already (have|use|using|work with|working with|partner with)"),
     (STRONG_NO, r"(decided|chose|chosen) (to go with|another|against)"),
     (STRONG_NO, r"(no|zero) (budget|need|bandwidth)"),
-    (STRONG_NO, r"please don't"),
+    (STRONG_NO, r"please don't(?! hesitate)"),  # "please don't hesitate to reach out" is a sign-off
     # A soft no: often "not now" rather than "never".
     (SOFT_NO, r"not (right )?now"),
     (SOFT_NO, r"not at (this|the moment|the present) ?(time|moment)?"),
@@ -109,6 +167,7 @@ _PHRASES: list[tuple[float, str]] = [
                  r"(details|info|information|proposal|deck|pricing|quote|times|slots|availability)"),
     (STRONG_YES, r"(i'm|i am|we're|we are) (very |definitely |really |quite |genuinely )?interested"),
     (STRONG_YES, r"(happy|glad|keen|love|like) to (talk|chat|connect|meet|learn more|hear more|discuss|speak|see)"),
+    (STRONG_YES, r"(love|like) (a|an|to see a|to get a|to book a) (quick |short )?(demo|call|chat|meeting|intro)"),
     (STRONG_YES, r"what (time|times|day|days) (works|work|suits|suit|is good|are good)"),
     (STRONG_YES, r"(works for me|sounds (good|great|perfect)|count me in|i'm in|we're in)"),
     (STRONG_YES, r"(my|our) (calendar|calendly)"),
@@ -119,6 +178,9 @@ _PHRASES: list[tuple[float, str]] = [
     (SOFT_YES, r"interested|curious"),
 ]
 _COMPILED = [(w, re.compile(rf"\b{p}\b", re.IGNORECASE)) for w, p in _PHRASES]
+# Polite words, not a no: dropped when the reply also has a clear yes ("Unfortunately I missed your email - yes, let's
+# talk!"). Without a clear yes they still count ("Unfortunately the timing is wrong").
+_HEDGES = ("unfortunately",)
 
 # A whole reply of a word or two ("Sure.", "No."), checked line by line on short replies only.
 _SHORT_YES = re.compile(r"^(yes|yeah|yep|sure|ok|okay|absolutely|definitely|of course|yes,? please|interested)[.!]*$",
@@ -154,5 +216,7 @@ def score_reply(text: str | None) -> dict:
 
     for weight, rx in _COMPILED:
         t, _ = rx.subn(lambda m, w=weight: take(m, w), t, count=1)
+    if any(h["weight"] == STRONG_YES for h in hits):
+        hits = [h for h in hits if h["phrase"] not in _HEDGES]
     score = min(1.0, max(0.0, NEUTRAL + sum(h["weight"] for h in hits)))
     return {"score": round(score, 2), "hits": hits, "question": bool(_QUESTION.search(text))}

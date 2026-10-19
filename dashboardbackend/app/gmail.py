@@ -143,11 +143,20 @@ def html_to_text(markup: str | None) -> str:
     s = re.sub(r"<(script|style|head|title)\b[\s\S]*?</\1\s*>", "", markup or "", flags=re.IGNORECASE)
     s = re.sub(r"<!--[\s\S]*?-->", "", s)
     s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</(p|div|h[1-6]|li|tr|table|blockquote)\s*>", "\n\n", s, flags=re.IGNORECASE)
+    # Quoted mail (<blockquote>) becomes "> " lines, as in a plain-text reply, so it is known to be quoted.
+    s = re.sub(r"<blockquote\b[^>]*>", "\n\x01\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</blockquote\s*>", "\n\x02\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</(p|div|h[1-6]|li|tr|table)\s*>", "\n\n", s, flags=re.IGNORECASE)
     s = re.sub(r"<li\b[^>]*>", "- ", s, flags=re.IGNORECASE)
     s = re.sub(r"<[^>]+>", "", s)
     s = html.unescape(s).replace("\xa0", " ")
-    s = re.sub(r"[ \t]+\n", "\n", s)
+    lines, depth = [], 0
+    for line in s.split("\n"):
+        if line.strip() in ("\x01", "\x02"):
+            depth = depth + 1 if line.strip() == "\x01" else max(0, depth - 1)
+            continue
+        lines.append("> " * depth + line if depth and line.strip() else line)
+    s = re.sub(r"[ \t]+\n", "\n", "\n".join(lines))
     return re.sub(r"\n{3,}", "\n\n", s).strip()
 
 

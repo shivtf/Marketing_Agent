@@ -53,7 +53,7 @@ _REFUSED = {
 @router.get("/needs-contact")
 async def needs_contact(page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
     """Companies waiting for an email -> { items, total, page, limit }. Strongest first."""
-    return await _page(_NEEDS_CONTACT, "score desc, since desc, id", page, limit)
+    return await _page(_NEEDS_CONTACT, "score desc nulls last, since desc, id", page, limit)  # unscored last
 
 
 @router.post("/needs-contact/{lead_id}/contact")

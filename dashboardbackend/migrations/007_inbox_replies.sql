@@ -1,7 +1,6 @@
 -- Positive Leads: replies the dashboard reads from Gmail itself (app/inbox.py), and labels people give replies.
--- The mail agent reads Gmail only while its pipeline runs; this lets the dashboard see replies anyway. Read only: the
--- dashboard never sends, changes or deletes mail, and never writes to the agent's tables (replies, emails,
--- email_events, ...). Rollback: 007_inbox_replies_rollback.sql.
+-- The mail agent only sends; every reply is read by the dashboard backend. Read only: the dashboard never sends,
+-- changes or deletes mail, and never writes to the agent's tables (emails, contacts, ...). Rollback: 007_inbox_replies_rollback.sql.
 -- Run once in the Supabase SQL editor. Safe to run again.
 
 -- A genuine reply to our outreach, found in the connected Gmail inbox and matched to the email we sent.
@@ -13,7 +12,8 @@ create table if not exists public.inbox_replies (
   email_id         uuid,                          -- the email of ours it answers (emails.id)
   contact_id       uuid,                          -- that email's lead (contacts.id)
   -- How it was matched: header = In-Reply-To / References name our email, thread = same Gmail conversation as our
-  -- email, sender = only the address matches a lead (weak: shown for review, not counted as a reply).
+  -- email, sender = only the address matches a lead (e.g. a new thread; still counted as the lead's reply, but not
+  -- linked to one particular email on History).
   match_method     text not null check (match_method in ('header', 'thread', 'sender')),
   from_email       text not null,
   subject          text,
@@ -35,10 +35,10 @@ create table if not exists public.inbox_seen (
   seen_at          timestamptz not null default now()
 );
 
--- The label a person gave a reply on Positive Leads. It is shown instead of the agent's label (which stays as it is
--- in replies) and is the start of a reviewed training set for a future classifier.
+-- The label a person gave a reply on Positive Leads. It wins over the keyword score and the automatic label, and is
+-- the start of a reviewed training set for a future classifier.
 create table if not exists public.reply_labels (
-  source     text not null check (source in ('agent', 'inbox')),  -- agent: replies.id; inbox: inbox_replies.id
+  source     text not null check (source in ('agent', 'inbox')),  -- always 'inbox' (inbox_replies.id); 'agent' is unused
   reply_id   uuid not null,
   label      text not null
     check (label in ('interested', 'question', 'not_interested', 'unsubscribe', 'ooo', 'bounce')),

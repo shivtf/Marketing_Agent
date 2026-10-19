@@ -1,8 +1,7 @@
 """Read-only data routes for the dashboard.
 
-Reads the tables the lead / outreach / content services write to (supabase/migrations/0002_core.sql)
-and returns the same shapes the dashboard's mock data used (eval/dashboard/core/data.js), so the
-frontend only has to swap its mock bodies for apiFetch() calls. Every route requires a Supabase login.
+Reads the tables the Marketing Agent writes (companies, contacts, emails, content_posts; never writes them) and returns
+them as camelCase JSON for dashboard/core/api.js. Every route requires a Supabase login.
 The mail agent only sends: every reply is one this backend read from Gmail (app/inbox.py, table inbox_replies), with
 the label a person gave it (reply_labels). Both tables come from migrations/007_inbox_replies.sql.
 """
@@ -10,7 +9,6 @@ the label a person gave it (reply_labels). Both tables come from migrations/007_
 import asyncio
 import logging
 import os
-import re
 import uuid
 from typing import Annotated, Any
 
@@ -18,7 +16,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import current_user
-from app.reply_rules import POSITIVE_AT, REVIEW_AT, mentions_unsubscribe, score_reply
+from app.reply_rules import POSITIVE_AT, REVIEW_AT, mentions_unsubscribe, preview, score_reply, strip_quoted
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -66,12 +64,15 @@ where co.lead_status not in ('DISCOVERED', 'REJECTED')
 ) x
 """
 
-# delivery_status: 'Sent' means the agent sent it without an error (not proof it reached the inbox); 'Failed' = bounced.
+# delivery_status: 'Sent' means the agent sent it without an error (not proof it reached the inbox); 'Failed' = bounced,
+# as the agent recorded it or as a bounce notice read from Gmail says (the same rule as the lead's Bounced status).
 _SENT = """
 select * from (
   select e.id, row_number() over (order by e.sent_at, e.id) as number, e.contact_id as lead_id, co.name as company,
          e.mailbox as "from", c.email as "to", e.subject, e.sent_at,
-         case e.status when 'bounced' then 'Failed' else 'Sent' end as delivery_status,
+         case when e.status = 'bounced'
+                     or exists (select 1 from inbox_replies b where b.email_id = e.id and b.auto_label = 'bounce')
+              then 'Failed' else 'Sent' end as delivery_status,
          -- The reply to it: one read from Gmail that surely answers it (reply headers or the same conversation, not
          -- just the sender's address).
          (select s.id from inbox_replies s where s.email_id = e.id and s.match_method in ('header', 'thread')
@@ -86,7 +87,10 @@ select * from (
 # oldest first so "#12" stays put.
 _REPLIES = """
 select *, row_number() over (order by received_at, id) as number from (
-  select s.id, coalesce(c.name, c.email, s.from_email) as sender_name, coalesce(c.email, s.from_email) as sender_email,
+  -- Who wrote it: the lead, or someone else in the conversation (e.g. a colleague they copied in).
+  select s.id,
+         case when lower(c.email) = s.from_email then coalesce(c.name, c.email) else s.from_email end as sender_name,
+         s.from_email as sender_email,
          e.mailbox as "to", coalesce(s.subject, 'Re: ' || coalesce(e.subject, '')) as subject, s.received_at,
          s.email_id as in_reply_to_id, coalesce(hl.label, s.auto_label) as label, s.body, s.contact_id as lead_id,
          co.name as company
@@ -219,9 +223,10 @@ async def lead_stats() -> dict:
 # was given. Positive Leads lists each of them on its own: a lead's new email adds a row, its older ones stay.
 _HUMAN_REPLIES = """
 select s.contact_id, s.id, s.email_id, s.received_at, coalesce(hl.label, s.auto_label) as label,
-       s.body, s.we_replied_at, hl.labelled_by, hl.labelled_at
+       s.body, e.body as sent_body, s.we_replied_at, hl.labelled_by, hl.labelled_at
 from inbox_replies s
 left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
+left join emails e on e.id = s.email_id
 where s.contact_id is not null and coalesce(hl.label, s.auto_label, '') not in ('ooo', 'bounce')
 """
 # Each lead's latest one (the lead drawer opened from the Dashboard shows it).
@@ -272,7 +277,7 @@ async def positive_leads() -> dict:
     rows = await _rows(
         f"""select r.id, l.id as lead_id, l.number, l.name, l.company, l.source, l.status,
                    r.id as reply_id, r.received_at as replied_at, r.we_replied_at as answered_at, r.label, r.body,
-                   r.labelled_at
+                   r.sent_body, r.labelled_at
             from ({_LEADS}) l
             join ({_HUMAN_REPLIES}) r on r.contact_id = l.id"""  # noqa: S608
     )
@@ -284,11 +289,11 @@ async def positive_leads() -> dict:
     for r in rows:
         latest[r["leadId"]] = max(latest.get(r["leadId"], r["repliedAt"]), r["repliedAt"])
     for r in rows:
-        body = r.pop("body")
+        body, ours = r.pop("body"), r.pop("sentBody")
         labelled = r.pop("labelledAt") is not None
-        group, r["reviewReason"], scored = _judge(r["label"], labelled, _strip_quoted(body))
+        group, r["reviewReason"], scored = _judge(r["label"], labelled, strip_quoted(body, ours))
         r["score"], r["scoreHits"] = scored["score"], scored["hits"]
-        r["preview"] = _preview(body)
+        r["preview"] = preview(body, ours)
         r["labelledByPerson"] = labelled
         # A "no" closes the lead: nothing is waiting on us unless someone chose to answer anyway.
         closed = group == "notInterested" or (group == "unsubscribe" and r["label"] == "unsubscribe")
@@ -299,36 +304,12 @@ async def positive_leads() -> dict:
     return {**{k: _follow_up_order(v) for k, v in groups.items()}, "repliedLeads": replied or 0}
 
 
-# Same rules as the reply classifier's strip_quoted (agent/replies.py): keep only what the person wrote.
-_QUOTE_START = re.compile(r"^(on .{5,120} wrote:|-{2,}\s*original message|from: .+@)", re.IGNORECASE)
-_GREETING = re.compile(r"^(hi|hello|hey|dear|good (morning|afternoon|evening))\b.{0,40}$", re.IGNORECASE)
-
-
-def _strip_quoted(body: str | None) -> str:
-    kept: list[str] = []
-    for line in (body or "").splitlines():
-        if _QUOTE_START.match(line.strip()):
-            break
-        if not line.lstrip().startswith(">"):
-            kept.append(line)
-    return "\n".join(kept).strip()
-
-
-def _preview(body: str | None, limit: int = 100) -> str:
-    """What the person wrote, without quoted mail or the greeting line, on one line."""
-    parts = [p.strip() for p in _strip_quoted(body).split("\n\n") if p.strip()]
-    if len(parts) > 1 and _GREETING.match(parts[0]):
-        parts = parts[1:]
-    text = " ".join(" ".join(parts).split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
-
-
 @router.get("/leads/by-reply/{reply_id}")
 async def lead_by_reply(reply_id: str) -> dict:
     """A lead with one particular reply of theirs (Positive Leads lists each reply on its own)."""
     try:
         reply = await (await _pg()).fetchrow(
-            "select contact_id, id, email_id, label, received_at, body, labelled_by, labelled_at "  # noqa: S608
+            "select contact_id, id, email_id, label, received_at, body, sent_body, labelled_by, labelled_at "  # noqa: S608
             f"from ({_HUMAN_REPLIES}) r where id = $1::uuid",
             reply_id,
         )
@@ -343,7 +324,7 @@ async def lead_by_reply(reply_id: str) -> dict:
 async def lead(lead_id: str) -> dict:
     try:
         reply = await (await _pg()).fetchrow(
-            "select id, email_id, label, received_at, body, labelled_by, labelled_at "  # noqa: S608
+            "select id, email_id, label, received_at, body, sent_body, labelled_by, labelled_at "  # noqa: S608
             f"from ({_LATEST_HUMAN_REPLY}) r where contact_id = $1::uuid",
             lead_id,
         )
@@ -373,7 +354,7 @@ async def _lead_detail(lead_id: str, reply: asyncpg.Record | None) -> dict:
     )
     row["replyLabel"] = reply["label"] if reply else None
     group, row["reviewReason"], scored = (
-        _judge(reply["label"], reply["labelled_at"] is not None, _strip_quoted(reply["body"]))
+        _judge(reply["label"], reply["labelled_at"] is not None, strip_quoted(reply["body"], reply["sent_body"]))
         if reply else (None, None, None)
     )
     row["replyGroup"] = group
@@ -386,7 +367,7 @@ async def _lead_detail(lead_id: str, reply: asyncpg.Record | None) -> dict:
     # History). Falls back to the whole body when everything in it looks quoted.
     row["latestReply"] = (
         {"id": str(reply["id"]), "receivedAt": reply["received_at"].isoformat(),
-         "text": _strip_quoted(reply["body"]) or (reply["body"] or "").strip()}
+         "text": strip_quoted(reply["body"], reply["sent_body"]) or (reply["body"] or "").strip()}
         if reply else None
     )
     return row

@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from app import auth
 from app.main import app
 
-_FUNCTIONS = ("dashboard_account_state(", "dashboard_claim(", "dashboard_user_role(", "dashboard_end_sessions(")
 SECRET = secrets.token_hex(32)  # random each run: signs fake test tokens only, never a real key
 client = TestClient(app)
 
@@ -45,7 +44,7 @@ def test_health_is_public():
 def test_valid_token():
     r = _get(_token())
     assert r.status_code == 200
-    assert r.json() == {"id": "u1", "email": "a@b.co", "role": "authenticated"}
+    assert r.json() == {"id": "u1", "email": "a@b.co", "role": "employee"}  # the dashboard role, not the token's "authenticated"
 
 
 def test_missing_token():
@@ -109,23 +108,18 @@ def presence(monkeypatch):
     state = {"alive": True, "removed": False, "holder": None, "fail": False, "no_table": False, "released": []}
 
     class Pool:
-        """A database without migrations/009: the narrow functions do not exist, the queries go to the tables."""
-
-        def _no_function(self, sql):
-            if state.get("functions") is None and any(f in sql for f in _FUNCTIONS):
-                raise asyncpg.UndefinedFunctionError(f"function does not exist: {sql[:40]}")
+        """A database with migrations/009: Supabase Auth only through its narrow functions."""
 
         async def fetchrow(self, sql, *_args):
-            self._no_function(sql)
             state.setdefault("sql", []).append(sql)
-            assert "from auth.users u" in sql or "dashboard_account_state(" in sql
+            assert "dashboard_account_state(" in sql
             return {"session_alive": state["alive"], "removed": state["removed"]}
 
         async def fetchval(self, sql, *args):
             if state["no_table"]:
                 raise asyncpg.UndefinedTableError('relation "dashboard_presence" does not exist')
-            self._no_function(sql)
             state.setdefault("sql", []).append(sql)
+            assert "dashboard_claim(" in sql
             user_id, session_id = args
             if state["holder"] in (None, session_id):
                 state["holder"] = session_id
@@ -226,9 +220,8 @@ def test_a_change_is_refused_when_the_sign_in_check_cannot_run(presence):
     assert client.post("/auth/signout", headers=headers).status_code == 503
 
 
-def test_the_narrow_functions_are_used_when_migration_009_is_applied(presence):
-    presence["functions"] = True
+def test_the_sign_in_check_reaches_supabase_auth_only_through_the_narrow_functions(presence):
     assert _get(_token(session_id=SESSION)).status_code == 200
     assert any("dashboard_account_state(" in s for s in presence["sql"])
     assert any("dashboard_claim(" in s for s in presence["sql"])
-    assert not any("from auth.users u" in s for s in presence["sql"])
+    assert not any("auth.users" in s or "auth.sessions" in s for s in presence["sql"])

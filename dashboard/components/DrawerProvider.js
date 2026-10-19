@@ -9,6 +9,7 @@ import { Skeleton, ErrorBox } from './ui';
 import { FormattedContent } from './FormattedContent';
 import { toSection, useLeadsFilter, useList, useSection } from './DataProvider';
 import { getKinds } from './drawerKinds';
+import { neighbours } from '@/core/listStep';
 
 const DrawerCtx = createContext(null);
 export const useDrawer = () => useContext(DrawerCtx);
@@ -23,9 +24,11 @@ export function DrawerProvider({ children }) {
   const bodyRef = useRef(null);
   const returnTo = useRef(null); // element to refocus on close; set while the drawer is open
   const pending = useRef(null); // drawer item to open once the target page has mounted
+  const lastIndex = useRef(-1); // where the open item was in the list behind Previous/Next (see below)
 
   const open = useCallback((kind, id) => {
     if (!returnTo.current) returnTo.current = document.activeElement;
+    lastIndex.current = -1;
     setS({ open: true, kind, id });
   }, []);
 
@@ -63,12 +66,10 @@ export function DrawerProvider({ children }) {
   const paged = useList(k?.paged ?? null);
 
   const items = !k ? [] : k.paged ? paged.data.items : k.list(section.data, filter, positiveView);
-  const index = items.findIndex((x) => x.id === s.id);
-
-  const step = (delta) => {
-    const next = items[index + delta];
-    if (next) open(s.kind, next.id);
-  };
+  // If the open item leaves the list (e.g. relabelled), Previous/Next carry on from where it was (core/listStep.js).
+  const { index, prev: prevItem, next: nextItem } = neighbours(items, s.id, lastIndex.current);
+  useEffect(() => { if (index >= 0) lastIndex.current = index; }, [index]);
+  const step = (item) => { if (item) open(s.kind, item.id); };
 
   useEffect(() => {
     if (!s.open) return undefined;
@@ -141,14 +142,14 @@ export function DrawerProvider({ children }) {
                   )}
                 </div>
                 <div className="steppers">
-                  <button className="sq" onClick={() => step(-1)} aria-label="Previous" disabled={index <= 0}>
+                  <button className="sq" onClick={() => step(prevItem)} aria-label="Previous" disabled={!prevItem}>
                     <Icon name="chevL" />
                   </button>
                   <button
                     className="sq"
-                    onClick={() => step(1)}
+                    onClick={() => step(nextItem)}
                     aria-label="Next"
-                    disabled={index < 0 || index >= items.length - 1}
+                    disabled={!nextItem}
                   >
                     <Icon name="chevR" />
                   </button>

@@ -1,6 +1,9 @@
 """Dashboard backend. Supabase handles sign-in; this API verifies the JWT on every protected call."""
 
+import asyncio
+import contextlib
 import os
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from dotenv import load_dotenv
@@ -10,12 +13,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.accounts import router as accounts_router
 from app.auth import current_user, release
 from app.data import router as data_router
+from app.inbox import check_every, check_interval
 from app.inbox import router as inbox_router
 from app.needs_contact import router as needs_contact_router
 
 load_dotenv()  # reads dashboardbackend/.env when started from that folder
 
-app = FastAPI(title="Dashboard backend")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Starts the scheduled inbox check (app/inbox.py) when INBOX_CHECK_EVERY_MINUTES is set."""
+    minutes = check_interval()
+    task = asyncio.create_task(check_every(minutes)) if minutes else None
+    yield
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(title="Dashboard backend", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -41,7 +58,8 @@ def health() -> dict:
 
 @app.get("/auth/me")
 def me(user: Annotated[dict, Depends(current_user)]) -> dict:
-    return {"id": user["sub"], "email": user.get("email"), "role": user.get("role")}
+    # The dashboard role (admin / employee), not the token's own "role" claim, which is always "authenticated".
+    return {"id": user["sub"], "email": user.get("email"), "role": (user.get("app_metadata") or {}).get("role")}
 
 
 @app.post("/auth/signout")
