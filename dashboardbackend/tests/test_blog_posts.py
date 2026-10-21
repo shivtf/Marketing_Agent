@@ -1,3 +1,8 @@
+import asyncio
+
+import asyncpg
+import httpx
+
 from app import blog_posts
 
 
@@ -40,3 +45,34 @@ def test_the_page_can_ask_for_the_mode(monkeypatch):
         assert TestClient(app).get("/blog-posts/mode").json() == {"mode": "draft"}
     finally:
         app.dependency_overrides.clear()
+
+
+
+def test_a_2xx_answer_that_is_not_json_counts_as_posted(monkeypatch):
+    real = httpx.AsyncClient
+    answer = httpx.MockTransport(lambda req: httpx.Response(201, text="<html>Created</html>"))
+    monkeypatch.setattr(blog_posts.httpx, "AsyncClient", lambda **kw: real(transport=answer, **kw))
+    monkeypatch.setenv("DEVTO_API_KEY", "k")
+    assert asyncio.run(blog_posts.post_to_devto("T", "B", [], True)) == ("", "")
+
+
+def test_a_post_the_database_cannot_record_is_reported_not_raised(monkeypatch):
+    class Pool:  # claims the blog, then refuses every write
+        async def fetchrow(self, *_):
+            return {"id": 1, "attempts": 1}
+
+        async def execute(self, *_):
+            raise asyncpg.PostgresConnectionError("gone")
+
+    async def post(*_, **__):
+        return "https://dev.to/us/1", "1"
+
+    async def no_wait(_):
+        return None
+
+    monkeypatch.setattr(blog_posts, "post_to_devto", post)
+    monkeypatch.setattr(blog_posts.asyncio, "sleep", no_wait)
+    row = {"file_name": "a.json", "blog_id": "A1", "blog": {"id": "A1", "content": "Text."}, "blog_hash": "h",
+           "publish_date": None}
+    out = asyncio.run(blog_posts._post_one(Pool(), row, "live", "ana", False))
+    assert "couldn't record it" in out["error"] and "https://dev.to/us/1" in out["error"]

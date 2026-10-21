@@ -1,7 +1,7 @@
 """The inbox check and Positive Leads against a REAL Postgres, with Gmail faked. Nothing here touches Supabase or Google.
 
 The database gets a minimal copy of the mail agent's tables plus this project's own migrations 006 and 007, run from
-their files (and the indexes of 008). The agent only sends, so every reply here is one the backend read from Gmail. Gmail is an httpx.MockTransport serving the made-up inbox below. Every lead and message is fake.
+their files (and the indexes of 008, and 012 for the do-not-email list). The agent only sends, so every reply here is one the backend read from Gmail. Gmail is an httpx.MockTransport serving the made-up inbox below. Every lead and message is fake.
 
     Lead          Our email                   In the inbox                                   Expected
     ------------  --------------------------  ---------------------------------------------  -----------------------------
@@ -58,6 +58,11 @@ create table emails (
   id uuid primary key default gen_random_uuid(), contact_id uuid references contacts, mailbox text, subject text,
   body text, status text, sent_at timestamptz, reply_id uuid, message_id text, gmail_message_id text, gmail_thread_id text,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+-- The agent's do-not-email list (agent migration 0002; email_hash there uses pgcrypto's digest, the same sha256).
+create table suppression_list (email_hash text primary key, reason text not null,
+  created_at timestamptz not null default now());
+create function email_hash(addr text) returns text language sql immutable as
+  $$ select encode(sha256(convert_to(lower(trim(addr)), 'UTF8')), 'hex') $$;
 """
 
 # name: (our email's Message-ID, its Gmail thread, status)
@@ -160,6 +165,8 @@ async def _seed(dsn):
         await conn.execute((MIGRATIONS / "007_inbox_replies.sql").read_text())  # safe to run twice
         await conn.execute((MIGRATIONS / "008_inbox_indexes.sql").read_text())
         await conn.execute((MIGRATIONS / "008_inbox_indexes.sql").read_text())  # safe to run twice
+        await conn.execute((MIGRATIONS / "012_unsubscribe_suppression.sql").read_text())
+        await conn.execute((MIGRATIONS / "012_unsubscribe_suppression.sql").read_text())  # safe to run twice
         await conn.execute("insert into gmail_connection (email, refresh_token) values ($1, $2)", OWN, SEALED)
         for name, (msgid, thread, status) in LEADS.items():
             company = await conn.fetchval(
@@ -314,7 +321,33 @@ def test_a_labelled_reply_shows_who_labelled_it(env):
     assert lead["replyLabel"] == "not_interested" and lead["replyGroup"] == "notInterested"
     assert lead["labelledBy"]["by"] == "ana@team.test"
     assert _get(env, f"/emails/replies/{dana['replyId']}")["label"] == "not_interested"
+    # The label report (app/label_report.py) reads it back with its own query: "What would it cost?" is a question to
+    # the keywords, a no to the person.
+    from app import label_report
+
+    rows = [dict(r) for r in _db(env, label_report._SQL, list(label_report.LABEL_GROUP))]
+    report = label_report.disagreements(rows)
+    assert [(i["from"], i["labelled"], i["keywords"]) for i in report["other"]] == [
+        ("dana@lead.test", "notInterested", "questions")]
     c.post("/inbox/label", headers=_auth(), json={**body, "label": None})
+
+
+def test_an_out_of_office_label_can_be_taken_back(env):
+    # Labelled out of office in the drawer: off Positive Leads, but the drawer still opens it, so it can be undone.
+    c = env["client"]
+    tom = next(r for r in _get(env, "/leads/positive")["review"] if r["name"] == "Tom")
+    body = {"replyId": tom["replyId"], "label": "ooo"}
+    assert c.post("/inbox/label", headers=_auth(), json=body).status_code == 200
+    assert "Tom" not in sum(_by_name(_get(env, "/leads/positive")).values(), [])
+    lead = _get(env, f"/leads/by-reply/{tom['id']}")
+    assert lead["replyLabel"] == "ooo" and lead["replyGroup"] is None and lead["labelledBy"]["by"] == "ana@team.test"
+    assert lead["latestReply"]["text"] == "Sounds interesting."
+    assert c.post("/inbox/label", headers=_auth(), json={**body, "label": None}).status_code == 200
+    assert "Tom" in _by_name(_get(env, "/leads/positive"))["review"]
+    # An automatic out-of-office (Olga's) opens too, and is never listed.
+    olga = _db(env, "select id from inbox_replies where gmail_message_id = 'm-olga'")[0]["id"]
+    lead = _get(env, f"/leads/by-reply/{olga}")
+    assert lead["replyLabel"] == "ooo" and lead["replyGroup"] is None and lead["labelledBy"] is None
 
 
 def test_label_for_a_reply_that_does_not_exist(env):
@@ -324,8 +357,53 @@ def test_label_for_a_reply_that_does_not_exist(env):
 
 
 def test_nothing_was_written_to_the_agents_tables(env):
-    # emails untouched; no replies or email_events table even exists here (any write to one would have failed).
+    # emails untouched; no replies or email_events table even exists here (any write to one would have failed). Nobody
+    # labelled a reply Unsubscribe, so nobody is on the do-not-email list either.
     assert _db(env, "select count(*) as n from emails where status <> 'sent'")[0]["n"] == 0
+    assert _db(env, "select count(*) as n from suppression_list")[0]["n"] == 0
+
+
+def _suppressed(env):
+    return {r["reason"] for r in _db(env, "select reason from suppression_list")}, {
+        r["email"]: r["s"] for r in _db(env, """select e as email, exists (select 1 from suppression_list
+                                                  where email_hash = email_hash(e)) as s
+                                                from unnest(array['uma@lead.test', 'ann@lead.test']) e""")}
+
+
+def test_an_unsubscribe_label_stops_the_agent_emailing_them(env):
+    c = env["client"]
+    uma = next(r for r in _get(env, "/leads/positive")["unsubscribe"] if r["name"] == "Uma")
+    # Only seen by the keywords so far: not on the list yet, and the drawer says so.
+    assert _get(env, f"/leads/by-reply/{uma['id']}")["doNotEmail"] is False
+    body = {"replyId": uma["replyId"], "label": "unsubscribe"}
+    assert c.post("/inbox/label", headers=_auth(), json=body).json() == {"ok": True}
+    assert _suppressed(env) == ({"unsubscribe"}, {"uma@lead.test": True, "ann@lead.test": False})
+    assert _get(env, f"/leads/by-reply/{uma['id']}")["doNotEmail"] is True
+    assert _db(env, "select added_by from dashboard_suppressions")[0]["added_by"] == "ana@team.test"
+    # Saving it again changes nothing; another label takes it back off the list.
+    assert c.post("/inbox/label", headers=_auth(), json=body).status_code == 200
+    assert c.post("/inbox/label", headers=_auth(), json={**body, "label": "not_interested"}).status_code == 200
+    assert _suppressed(env)[1]["uma@lead.test"] is False
+    assert _db(env, "select count(*) as n from dashboard_suppressions")[0]["n"] == 0
+    c.post("/inbox/label", headers=_auth(), json={**body, "label": None})
+
+
+def test_taking_the_label_back_never_lifts_the_agents_own_entry(env):
+    c = env["client"]
+    # Ann's address bounced earlier: the agent put it on the list itself.
+    _db(env, "insert into suppression_list (email_hash, reason) values (email_hash('Ann@Lead.test'), 'bounce')")
+    ann = next(r for r in _get(env, "/leads/positive")["positive"] if r["name"] == "Ann")
+    body = {"replyId": ann["replyId"], "label": "unsubscribe"}
+    assert c.post("/inbox/label", headers=_auth(), json=body).status_code == 200
+    assert c.post("/inbox/label", headers=_auth(), json={**body, "label": None}).status_code == 200
+    assert _suppressed(env) == ({"bounce"}, {"uma@lead.test": False, "ann@lead.test": True})
+    _db(env, "delete from suppression_list")
+
+
+def test_the_functions_act_only_on_a_labelled_reply(env):
+    tom = _db(env, "select id from inbox_replies where gmail_message_id = 'm-tom'")[0]["id"]
+    assert _db(env, "select dashboard_suppress($1, 'x') as n", tom)[0]["n"] == 0  # not labelled unsubscribe
+    assert _db(env, "select count(*) as n from suppression_list")[0]["n"] == 0
 
 
 def test_a_reply_that_came_before_its_lead_is_found_later(env):
@@ -355,6 +433,8 @@ def test_a_sent_email_links_to_the_reply_read_from_gmail(env):
     assert sent["sam@lead.test"]["replyId"] is None  # matched by sender only: not proof it answers this email
     # Ben's email bounced (the notice was read from Gmail): Failed here too, as his lead says Bounced.
     assert sent["ben@lead.test"]["deliveryStatus"] == "Failed" and sent["priya@lead.test"]["deliveryStatus"] == "Sent"
+    # A bounce notice or an out-of-office is not a reply: Ben's and Olga's emails show none.
+    assert sent["ben@lead.test"]["replyId"] is None and sent["olga@lead.test"]["replyId"] is None
     assert _get(env, "/emails/sent?limit=200")["failed"] == 1
     assert _get(env, f"/emails/sent/{sent['priya@lead.test']['id']}")["replyId"] == str(priya_reply)
 

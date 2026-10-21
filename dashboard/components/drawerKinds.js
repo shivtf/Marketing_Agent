@@ -17,7 +17,8 @@ const ActionButton = ({ onClick, icon, children }) => (
 );
 
 // "Label this reply": a person's label for the reply the lead is judged on. The lead moves to that group, and the
-// labels become the reviewed examples a future classifier can learn from. The mail agent does not see it.
+// labels become the reviewed examples a future classifier can learn from. Unsubscribe also puts the lead on the mail
+// agent's do-not-email list (removing the label takes them off again); the agent sees no other label.
 function LabelReply({ d }) {
   const qc = useQueryClient();
   const [label, setLabel] = useState(d.replyLabel || '');
@@ -132,10 +133,22 @@ export function getKinds(goto) {
             <Badge text="Needs review" tone={toneOf('Needs review')} /> <span className="muted small">{d.reviewReason}</span>
           </MetaRow>,
         ] : []),
+        ...(d.replyLabel === 'ooo' || d.replyLabel === 'bounce' ? [
+          <MetaRow key="auto" k="Not Listed">
+            <span className="small">
+              Automatic mail is left out of Positive Leads.
+              {d.labelledBy ? ' To bring it back, choose another label or remove this one.' : ''}
+            </span>
+          </MetaRow>,
+        ] : []),
         ...(d.replyGroup === 'unsubscribe' ? [
           <MetaRow key="unsub" k="Unsubscribe">
             <span className="small">
-              Unsubscribe requested — action required in the mail agent to stop future emails.
+              {d.doNotEmail === true
+                ? 'On the mail agent’s do-not-email list: it won’t email them again.'
+                : d.doNotEmail === false
+                  ? 'Not on the mail agent’s do-not-email list yet: label this reply Unsubscribe to stop its emails.'
+                  : 'Unsubscribe requested — label this reply Unsubscribe to stop the mail agent’s emails.'}
               {d.reviewReason && <span className="muted"> ({d.reviewReason}.)</span>}
             </span>
           </MetaRow>,

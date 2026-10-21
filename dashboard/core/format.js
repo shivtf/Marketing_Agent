@@ -10,8 +10,8 @@ export const replyLabel = (label) => (label ? REPLY_LABELS[label] || label : 'No
 
 export const pad = (n) => String(n).padStart(3, '0');
 
-// The keyword score of a reply (backend app/reply_rules.py): 0.70 or more is Positive, below 0.40 Not interested.
-export const scoreTone = (score) => (score >= 0.7 ? 'green' : score < 0.4 ? 'red' : 'amber');
+// The keyword score of a reply (backend app/reply_rules.py): 0.70 or more is Positive, below 0.30 Not interested.
+export const scoreTone = (score) => (score >= 0.7 ? 'green' : score < 0.3 ? 'red' : 'amber');
 // [{ phrase, weight }] -> "“let's talk” +0.25, “not now” −0.20"
 export const scoreHitsText = (hits) => hits
   .map((h) => `“${h.phrase}” ${h.weight > 0 ? '+' : '−'}${Math.abs(h.weight).toFixed(2)}`).join(', ');

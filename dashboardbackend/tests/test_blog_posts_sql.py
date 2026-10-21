@@ -49,16 +49,27 @@ def env(tmp_path_factory):
 
 @pytest.fixture
 def devto(monkeypatch):
-    """Stand-in for Dev.to: records each post; a title in `fail` raises that PostError."""
-    state = {"calls": [], "fail": {}}
+    """Stand-in for Dev.to: records each post; a title in `fail` raises that PostError. `site`: what is on Dev.to
+    (title, published, url); a title in `lost` is posted there although the answer never comes back."""
+    state = {"calls": [], "fail": {}, "lost": set(), "site": [], "looked": []}
 
     async def post(title, body, tags, publish):
         state["calls"].append({"title": title, "body": body, "tags": tags, "publish": publish})
+        url = f"https://dev.to/us/{len(state['calls'])}"
+        if title in state["lost"]:
+            state["site"].append((title, publish, url))
+            raise blog_posts.PostError("Dev.to didn't answer.")
         if title in state["fail"]:
             raise blog_posts.PostError(state["fail"][title])
-        return f"https://dev.to/us/{len(state['calls'])}", str(len(state["calls"]))
+        state["site"].append((title, publish, url))
+        return url, str(len(state["calls"]))
+
+    async def find(title, published):
+        state["looked"].append(title)
+        return next(((u, "x") for t, p, u in state["site"] if t == title and p == published), None)
 
     monkeypatch.setattr(blog_posts, "post_to_devto", post)
+    monkeypatch.setattr(blog_posts, "find_on_devto", find)
     monkeypatch.setenv("BLOG_POSTING", "live")
     return state
 
@@ -174,3 +185,29 @@ def test_a_missed_blog_can_be_posted_late_but_not_too_late(env, devto):
     late = _post(env, "/blog-posts/post-again", json={"fileName": "f.json", "blogId": "F2"})
     assert late.status_code == 422 and "3 days" in late.json()["detail"]
     assert _row(env, "f.json", "F2") is None
+
+
+def test_a_blog_that_reached_devto_without_an_answer_is_not_posted_twice(env, devto):
+    _approve(env, "g.json", "G1")
+    devto["lost"].add("Topic G1")  # Dev.to posts it, but the answer is lost
+    assert [f["blogId"] for f in _post(env).json()["failed"]] == ["G1"]
+    devto["lost"].clear()
+    res = _post(env, "/blog-posts/post-again", json={"fileName": "g.json", "blogId": "G1"}).json()
+    assert res["posted"] == [{"fileName": "g.json", "blogId": "G1", "url": "https://dev.to/us/1", "draft": False}]
+    assert len(devto["calls"]) == 1 and devto["looked"] == ["Topic G1"]  # looked up, not posted again
+    assert _row(env, "g.json", "G1")["status"] == "posted"
+
+
+def test_a_blog_left_posting_is_looked_for_before_post_again(env, devto):
+    # The server stopped after Dev.to took the post but before it was recorded: the row was left 'posting'.
+    _approve(env, "h.json", "H1")
+    devto["site"].append(("Topic H1", True, "https://dev.to/us/h1"))
+    _as(env["dsn"], """insert into blog_posts (file_name, blog_id, status, title, blog_hash, started_by, started_at)
+                       values ('h.json', 'H1', 'posting', 'Topic H1', 'h-H1', 'ana@team.test',
+                               now() - interval '20 minutes')""")
+    res = _post(env, "/blog-posts/post-again", json={"fileName": "h.json", "blogId": "H1"}).json()
+    assert [p["url"] for p in res["posted"]] == ["https://dev.to/us/h1"] and devto["calls"] == []
+    # A first try is never looked up (nothing can be there yet).
+    _approve(env, "h.json", "H2")
+    _post(env)
+    assert devto["looked"] == ["Topic H1"] and [c["title"] for c in devto["calls"]] == ["Topic H2"]
