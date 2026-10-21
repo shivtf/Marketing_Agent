@@ -1,6 +1,6 @@
 'use client';
-// Page 3: Blogs. Weekly Blog Files (the week's JSON, stored as is in Supabase Storage for the publishing backend, and
-// which blog goes out on which day) on top, and the Blog Tracker (blogs written so far) below.
+// Page 3: Blogs. Weekly Blog Files (the week's JSON, stored as is in Supabase Storage: which blog goes out on which day,
+// its approval and its post to Dev.to) on top, and the Blog Tracker (blogs written so far) below.
 import { useEffect, useRef, useState } from 'react';
 import { OpenRow } from './OpenRow';
 import { useList } from './DataProvider';
@@ -10,9 +10,9 @@ import { Icon } from './Icon';
 import { useConfirm } from './ConfirmDialog';
 import { getSession, isAdmin } from '@/core/auth';
 import { pad, fmtDay, fmtDate } from '@/core/format';
-import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, decideBlogs, weekChoices, weekLabel } from '@/core/blogFiles';
-import { postTodaysBlogs, postBlogAgain } from '@/core/api';
-import { readBlogs, checkUpload, findBlog } from '@/core/weeklyBlogs';
+import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, decideBlogs, removeBlog, weekLabel } from '@/core/blogFiles';
+import { postTodaysBlogs, postBlogAgain, getPostingMode } from '@/core/api';
+import { readBlogs, checkUpload, findBlog, headline, blogToday, addDays, thisMonday, LATE_DAYS } from '@/core/weeklyBlogs';
 
 const StatBox = ({ label, value, color }) => (
   <div className="stat-box">
@@ -32,15 +32,20 @@ function useIsAdmin() {
 // admin approved it here (app/api/blogs/approvals), when an admin clicks "Post today's blogs": the dashboard backend
 // posts it to Dev.to (dashboardbackend/app/blog_posts.py) and records it in blog_posts (each blog's `post`).
 
-const todayYmd = () => {
-  const d = new Date();
-  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
-};
+// India time, like Vercel and the backend (core/weeklyBlogs.js), whatever the browser's clock says.
+const todayYmd = () => blogToday();
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-// Waiting / Approved / Rejected, or Not approved once the blog's date has passed without approval.
-function ApprovalBadge({ approval: a, date }) {
+// Posted (or being posted) for real: on Dev.to, public. A Dev.to draft from a test doesn't count.
+const isPosted = (post) => !!post && (post.status === 'posting' || (post.status === 'posted' && !post.draft));
+
+// Waiting / Approved / Rejected; once the blog's date has passed: Not approved, or Missed when it was approved but nobody
+// posted it on its day (`posted`: it is on Dev.to).
+function ApprovalBadge({ approval: a, date, posted }) {
   if (!a) return <span className="muted">—</span>;
+  if (a.status === 'approved' && !posted && date && date < todayYmd()) {
+    return <Badge text="Missed" tone="red" title={`Approved by ${a.by}, but nobody posted it on its day. It can still be posted for ${LATE_DAYS} days: open it.`} />;
+  }
   if (a.status === 'approved') return <Badge text="Approved" tone="green" title={`Approved by ${a.by}, ${fmtDate(a.at)}`} />;
   if (a.status === 'rejected') return <Badge text="Rejected" tone="red" title={a.reason} />;
   if (date && date < todayYmd()) return <Badge text="Not approved" tone="gray" title="Its date has passed: it won't be posted." />;
@@ -51,6 +56,10 @@ function ApprovalBadge({ approval: a, date }) {
     />
   );
 }
+
+// A blog an admin may take out of its week: it has an id and isn't posted or being posted for real (a Dev.to draft
+// aside). The server checks the same. Removing a week's last blog deletes its file.
+const removable = (b) => !!b.id && !isPosted(b.post);
 
 // What the backend did with an approved blog: Posted (a link), Posting…, Post failed. null: not posted.
 function PostBadge({ post }) {
@@ -67,14 +76,18 @@ function PostBadge({ post }) {
 const BlogStatus = ({ blog: b }) => (
   b.post && !(b.post.status === 'posted' && b.post.draft)
     ? <PostBadge post={b.post} />
-    : <span className="row approval-actions"><ApprovalBadge approval={b.approval} date={b.publishDate} /><PostBadge post={b.post} /></span>
+    : <span className="row approval-actions"><ApprovalBadge approval={b.approval} date={b.publishDate} posted={false} /><PostBadge post={b.post} /></span>
 );
 
-// Posted, being posted or failed: what the viewer says about it, and (admins, today's blog) Post again.
-function PostPanel({ admin, name, blog, post, onDone }) {
+// Posted, being posted, failed, or missed (approved, never posted, its day passed): what the viewer says about it, and
+// (admins) Post again / Post now, from the blog's date up to LATE_DAYS after it (the backend allows the same).
+function PostPanel({ admin, name, blog, post, approval, onDone }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  if (!post) return null;
+  const today = todayYmd();
+  const date = blog.publishDate;
+  const missed = !post && approval?.status === 'approved' && !!date && date < today;
+  if (!post && !missed) return null;
   async function again() {
     setBusy(true);
     setError('');
@@ -88,26 +101,32 @@ function PostPanel({ admin, name, blog, post, onDone }) {
       setBusy(false);
     }
   }
+  const lastDay = date ? addDays(date, LATE_DAYS) : '';
+  const inTime = !!date && date <= today && today <= lastDay;
   let text;
-  if (post.status === 'posted') {
+  if (missed) {
+    text = inTime
+      ? <>Approved, but nobody posted it on {fmtDay(date, 'long')}. It can still be posted until {fmtDay(lastDay, 'long')}.</>
+      : <>Approved, but nobody posted it on {fmtDay(date, 'long')}, and it is too late now: it won&apos;t be posted.</>;
+  } else if (post.status === 'posted') {
     text = <>{post.draft ? 'Saved as a Dev.to draft (test mode)' : 'Posted to Dev.to'} {fmtDate(post.at)}.{' '}
       {post.url && <ExtLink href={post.url}>Open it</ExtLink>}</>;
   } else if (post.status === 'failed') {
-    text = <>Posting to Dev.to failed: <i>{post.error}</i></>;
+    text = <>Posting to Dev.to failed: <i>{post.error}</i>{!inTime && ' It is too late to post it again.'}</>;
   } else {
     text = <>Being posted to Dev.to now. If this stays for more than 15 minutes, Post again.</>;
   }
-  const canRetry = admin && post.status !== 'posted' && blog.publishDate === todayYmd();
+  const canPost = admin && inTime && (missed || post.status !== 'posted');
   return (
     <div className="approval-box">
-      <div className="approval-head"><b>Dev.to</b><PostBadge post={post} /></div>
+      <div className="approval-head"><b>Dev.to</b>{post ? <PostBadge post={post} /> : <Badge text="Missed" tone="red" />}</div>
       <p className="small">{text}</p>
-      {canRetry && (
+      {canPost && (
         <div className="row approval-actions">
           <button className="btn small-btn" type="button" disabled={busy} onClick={again}>
-            {busy ? 'Posting…' : 'Post again'}
+            {busy ? 'Posting…' : missed ? 'Post now' : 'Post again'}
           </button>
-          {post.status === 'failed' && <span className="muted small">Check Dev.to first if it says it may have posted it.</span>}
+          {post?.status === 'failed' && <span className="muted small">Check Dev.to first if it says it may have posted it.</span>}
         </div>
       )}
       {error && <div className="auth-msg" role="alert" data-tone="error">{error}</div>}
@@ -129,7 +148,8 @@ function ApprovalPanel({ admin, name, blog, entry, problem, onDone }) {
   const a = entry.approval || { status: 'waiting' };
   const past = !!blog.publishDate && blog.publishDate < todayYmd();
   // Posted or being posted for real: the decision can't change any more (the server refuses it too).
-  const locked = !!entry.post && (entry.post.status === 'posting' || (entry.post.status === 'posted' && !entry.post.draft));
+  const locked = isPosted(entry.post);
+  const empty = !blog.content.trim(); // can't be posted, so can't be approved (the server refuses it too)
 
   async function send(status, why = '') {
     setBusy(true);
@@ -151,7 +171,9 @@ function ApprovalPanel({ admin, name, blog, entry, problem, onDone }) {
   if (a.status === 'approved') {
     text = locked
       ? <>Approved by {a.by}, {fmtDate(a.at)}.</>
-      : <>Approved by {a.by}, {fmtDate(a.at)}. This version is posted to Dev.to when an admin clicks Post today&apos;s blogs on {fmtDay(blog.publishDate, 'long')}.</>;
+      : past
+        ? <>Approved by {a.by}, {fmtDate(a.at)}.</>
+        : <>Approved by {a.by}, {fmtDate(a.at)}. This version goes to Dev.to when an admin clicks Post today&apos;s blogs on {fmtDay(blog.publishDate, 'long')}: nothing posts it on its own.</>;
   } else if (a.status === 'rejected') {
     text = <>Rejected by {a.by}, {fmtDate(a.at)}: <i>{a.reason}</i> It won&apos;t be posted.</>;
   } else if (past) {
@@ -162,11 +184,12 @@ function ApprovalPanel({ admin, name, blog, entry, problem, onDone }) {
   }
   return (
     <div className="approval-box">
-      <div className="approval-head"><b>Approval</b><ApprovalBadge approval={a} date={blog.publishDate} /></div>
+      <div className="approval-head"><b>Approval</b><ApprovalBadge approval={a} date={blog.publishDate} posted={locked} /></div>
       <p className="small">{text}</p>
+      {admin && empty && a.status !== 'approved' && !past && <p className="small muted">It has no content, so it can&apos;t be approved: fix the file and upload it again.</p>}
       {admin && !rejecting && !locked && (
         <div className="row approval-actions">
-          {a.status !== 'approved' && !past && (
+          {a.status !== 'approved' && !past && !empty && (
             <button className="btn primary small-btn" type="button" disabled={busy} onClick={() => send('approved')}>
               <Icon name="check" /> Approve
             </button>
@@ -242,7 +265,7 @@ function BlogViewer({ name, row, admin, onClose, onStale }) {
   const b = state.blog;
   const join = (xs) => (xs?.length ? xs.join(', ') : '—');
   return (
-    <ViewDialog title={b ? b.topic || b.id : 'Blog'} onClose={onClose}>
+    <ViewDialog title={b ? headline(b) || b.id : 'Blog'} onClose={onClose}>
       {state.status === 'loading' && <Skeleton rows={6} />}
       {state.status === 'error' && <div className="notice">{state.message}</div>}
       {state.changed && (
@@ -250,13 +273,14 @@ function BlogViewer({ name, row, admin, onClose, onStale }) {
       )}
       {b && (
         <div className="file-view-body blog-view">
-          <PostPanel admin={admin} name={name} blog={b} post={state.entry?.post} onDone={decided} />
+          <PostPanel admin={admin} name={name} blog={b} post={state.entry?.post} approval={state.entry?.approval} onDone={decided} />
           <ApprovalPanel
             key={`${b.id}-${state.entry?.hash}`} admin={admin} name={name} blog={b} entry={state.entry}
             problem={state.approvalProblem} onDone={decided}
           />
           <div className="meta">
             <MetaRow k="ID"><span className="mono">{b.id || '—'}</span></MetaRow>
+            {b.title && b.topic && <MetaRow k="Topic">{b.topic}</MetaRow>}
             <MetaRow k="Publish Date">{b.publishDate ? fmtDay(b.publishDate, 'long') : '—'}</MetaRow>
             <MetaRow k="Category">{b.category || '—'}</MetaRow>
             <MetaRow k="Keywords">{join(b.keywords)}</MetaRow>
@@ -280,15 +304,15 @@ function BlogViewer({ name, row, admin, onClose, onStale }) {
   );
 }
 
-// What the chosen file holds, checked against the chosen week, before it is saved.
+// What the chosen file holds and which week its dates are in, checked, before it is saved.
 function UploadPreview({ preview, busy, onSave, onCancel }) {
   const { blogs, errors, warnings, fileName } = preview;
   return (
     <div className="plan-preview">
       <div className="plan-preview-head">
-        <b>Check the week before saving</b>
+        <b>{fileName ? <>This file is for {weekLabel(fileName)}</> : 'The week is unknown: no blog has a real date'}</b>
         <span className="muted small">
-          {blogs.length} blog{blogs.length === 1 ? '' : 's'} → <span className="mono">{fileName}</span>
+          {blogs.length} blog{blogs.length === 1 ? '' : 's'}{fileName && <> → <span className="mono">{fileName}</span></>}
           {errors.length ? ` · ${errors.length} problem${errors.length === 1 ? '' : 's'} to fix` : ''}
         </span>
       </div>
@@ -301,12 +325,12 @@ function UploadPreview({ preview, busy, onSave, onCancel }) {
       {blogs.length > 0 && (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Date</th><th>ID</th><th>Topic</th><th>Category</th></tr></thead>
+            <thead><tr><th>Date</th><th>ID</th><th>Title</th><th>Category</th></tr></thead>
             <tbody>
               {blogs.map((b) => (
                 <tr key={b.n}>
                   <td className="nowrap">{b.publishDate ? fmtDay(b.publishDate) : '—'}</td><td className="mono">{b.id || '—'}</td>
-                  <td><div className="ellip wide">{b.topic || '—'}</div></td><td>{b.category || '—'}</td>
+                  <td><div className="ellip wide">{headline(b) || '—'}</div></td><td>{b.category || '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -314,7 +338,7 @@ function UploadPreview({ preview, busy, onSave, onCancel }) {
         </div>
       )}
       <div className="row plan-actions">
-        <button className="btn primary" type="button" disabled={busy || errors.length > 0} onClick={onSave}>
+        <button className="btn primary" type="button" disabled={busy || errors.length > 0 || !fileName} onClick={onSave}>
           {busy ? 'Saving…' : 'Save to Supabase Storage'}
         </button>
         <button className="btn" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
@@ -326,17 +350,22 @@ function UploadPreview({ preview, busy, onSave, onCancel }) {
   );
 }
 
-function WeeklyFilesCard({ admin }) {
-  // Blogs are uploaded once a week, always for next week (fixed while the page is open).
-  const [chosen] = useState(() => weekChoices(2)[1]);
-  const { week } = chosen;
+function WeeklyFilesCard({ admin, onTrackerChange }) {
   const [files, setFiles] = useState({ status: 'loading', items: [] });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ text: '', tone: 'error' });
-  const [preview, setPreview] = useState(null); // { text, blogs, errors, warnings, week, fileName, label }
+  const [preview, setPreview] = useState(null); // { text, blogs, errors, warnings, monday, fileName }
   const [confirmDialog, confirm] = useConfirm();
   const [blogView, setBlogView] = useState(null); // { name, row }: the file and the schedule row clicked
+  // Blogs removed while the page is open ("file\nid"): hidden at once, and kept hidden even if a reload still gets the
+  // old copy of the file for a moment.
+  const [removed, setRemoved] = useState(() => new Set());
   const input = useRef(null);
+  // What Post today's blogs does on the backend: off (no button), draft (test: Dev.to drafts) or live. null: unknown.
+  const [mode, setMode] = useState(null);
+  useEffect(() => {
+    if (admin) getPostingMode().then((r) => setMode(r.mode)).catch(() => setMode(null));
+  }, [admin]);
 
   const load = () => listWeeklyFiles()
     .then((items) => setFiles({ status: 'ready', items }))
@@ -356,12 +385,12 @@ function WeeklyFilesCard({ admin }) {
     setMsg({ text: '', tone: 'error' });
     setPreview(null);
     const text = await file.text();
-    const check = checkUpload(text, week); // the server runs it again before saving
+    const check = checkUpload(text); // the week comes from its dates; the server runs it again before saving
     if (check.error) {
       setMsg({ text: `${file.name}: ${check.error}`, tone: 'error' });
       return;
     }
-    setPreview({ text, ...check, week, fileName: chosen.fileName, label: chosen.label });
+    setPreview({ text, ...check });
   }
 
   async function onSave() {
@@ -370,17 +399,17 @@ function WeeklyFilesCard({ admin }) {
     try {
       let r;
       try {
-        r = await uploadWeeklyFile(p.week, p.text);
+        r = await uploadWeeklyFile(p.text);
       } catch (err) {
         if (err.status !== 409) throw err;
         const ok = await confirm({
           title: `Replace ${p.fileName}?`,
-          message: `There is already a file for ${p.label.replace(/ \(.*/, '')}. The new one replaces it.`,
+          message: `There is already a file for ${weekLabel(p.fileName)}. The new one replaces it.`,
           confirmLabel: 'Replace',
           danger: true,
         });
         if (!ok) return;
-        r = await uploadWeeklyFile(p.week, p.text, true);
+        r = await uploadWeeklyFile(p.text, true);
       }
       setPreview(null);
       const again = r.unapproved?.length
@@ -399,7 +428,7 @@ function WeeklyFilesCard({ admin }) {
   async function approveWeek(f, list) {
     const ok = await confirm({
       title: `Approve ${plural(list.length, 'blog')}?`,
-      message: `${weekLabel(f.name)}: the publishing backend will post ${list.length === 1 ? 'it' : 'them'} on ${list.length === 1 ? 'its date' : 'their dates'}, exactly as ${list.length === 1 ? 'it is' : 'they are'} now. Open a blog to read it first.`,
+      message: `${weekLabel(f.name)}: ${list.length === 1 ? 'it goes' : 'they go'} to Dev.to exactly as ${list.length === 1 ? 'it is' : 'they are'} now, when an admin clicks Post today's blogs on ${list.length === 1 ? 'its day' : 'each day'}. Open a blog to read it first.`,
       confirmLabel: 'Approve',
     });
     if (!ok) return;
@@ -409,6 +438,40 @@ function WeeklyFilesCard({ admin }) {
       setMsg({ text: `Approved ${plural(list.length, 'blog')} of ${weekLabel(f.name)}.`, tone: 'ok' });
     } catch (err) {
       setMsg({ text: `Couldn't approve: ${err.message}`, tone: 'error' });
+    } finally {
+      setBusy(false);
+      load();
+    }
+  }
+
+  // Take one blog out of its week (and its approval), so it is never posted and leaves this page. `b.hash` is the
+  // version listed: if the file was replaced since, the server refuses and the list is read again.
+  async function removeRow(f, b, last) {
+    // A week not over yet can be uploaded again (its Monday is in the name, DD_MM_YY).
+    const monday = `20${f.name.slice(6, 8)}-${f.name.slice(3, 5)}-${f.name.slice(0, 2)}`;
+    const back = monday >= thisMonday()
+      ? 'To bring it back, upload the week\'s file again with it.'
+      : 'It can\'t be brought back: its week is over.';
+    const ok = await confirm({
+      title: `Remove ${b.id}?`,
+      message: last
+        ? `"${headline(b) || b.id}" is the last blog of ${weekLabel(f.name)}, so the week's file ${f.name} is deleted. It won't be posted. ${back}`
+        : `"${headline(b) || b.id}" is taken out of ${f.name} and won't be posted. ${back}`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    const k = `${f.name}\n${b.id}`;
+    const show = (on) => setRemoved((prev) => { const next = new Set(prev); if (on) next.delete(k); else next.add(k); return next; });
+    show(false); // gone from the list at once; back if the server refuses
+    setBusy(true); // one change to the files at a time: two saves of the same file would undo each other
+    try {
+      const r = await removeBlog(f.name, b.id, b.hash);
+      setMsg({ text: `Removed ${b.id} from ${weekLabel(f.name)}${r.fileDeleted ? `, and the week's file with it` : ''}. It won't be posted.`, tone: 'ok' });
+      if (b.post) onTrackerChange(); // its test draft or failed attempt leaves the Blog Tracker too
+    } catch (err) {
+      show(true);
+      setMsg({ text: `Couldn't remove ${b.id}: ${err.message}`, tone: 'error' });
     } finally {
       setBusy(false);
       load();
@@ -437,33 +500,38 @@ function WeeklyFilesCard({ admin }) {
     } finally {
       setBusy(false);
       load();
+      onTrackerChange(); // new posts show in the Blog Tracker
     }
   }
 
-  // Today's approved blogs the backend hasn't posted yet (a Dev.to draft counts: it is posted for real once live).
+  // Today's approved blogs the backend hasn't posted yet. A Dev.to draft is done in test mode, but still to post once
+  // posting is live (a click then posts it for real). Nothing is due while posting is off.
   const today = todayYmd();
-  const dueToday = files.items.flatMap((f) => f.blogs || []).filter((b) => b.id && b.publishDate === today
-    && b.approval?.status === 'approved' && (!b.post || (b.post.status === 'posted' && b.post.draft))).length;
+  const dueToday = mode === 'off' ? 0 : files.items.flatMap((f) => f.blogs || []).filter((b) => b.id && b.publishDate === today
+    && b.approval?.status === 'approved' && (!b.post || (mode === 'live' && b.post.status === 'posted' && b.post.draft))).length;
 
   let body;
   if (files.status === 'loading') body = <Skeleton rows={4} />;
   else if (files.status === 'error') body = <ErrorBox what="the weekly blog files" onRetry={load} />;
-  else if (!files.items.length) body = <EmptyBox icon="calendar">No weekly blog files yet.{admin ? " Upload next week's JSON." : ''}</EmptyBox>;
+  else if (!files.items.length) body = <EmptyBox icon="calendar">No weekly blog files yet.{admin ? " Upload a week's JSON." : ''}</EmptyBox>;
   else {
     const rows = [];
+    const cols = admin ? 5 : 4;
     for (const f of files.items) {
-      if (f.problem) rows.push(<tr key={`p-${f.name}`}><td colSpan={4} className="muted">Couldn&apos;t read {f.name}: {f.problem}</td></tr>);
+      if (f.problem) rows.push(<tr key={`p-${f.name}`}><td colSpan={cols} className="muted">Couldn&apos;t read {f.name}: {f.problem}</td></tr>);
       else if (!f.blogs) continue; // older weeks: not read for the schedule
       else {
-        const waiting = f.blogs.filter((b) => b.approval?.status === 'waiting' && b.publishDate >= today);
-        const approvable = admin ? waiting.filter((b) => b.id) : [];
+        const listed = f.blogs.filter((b) => !removed.has(`${f.name}\n${b.id}`));
+        if (!listed.length) continue; // its last blog was just removed: the file is gone
+        const waiting = listed.filter((b) => b.approval?.status === 'waiting' && b.publishDate >= today);
+        const approvable = admin ? waiting.filter((b) => b.id && b.hasContent) : []; // an empty blog can't be approved
         rows.push(
           <tr key={`w-${f.name}`} className="week-row">
-            <td colSpan={4}>
+            <td colSpan={cols}>
               <div className="week-row-inner">
                 <span>
                   <b>{weekLabel(f.name)}</b>
-                  <span className="muted small"> · {plural(f.blogs.length, 'blog')}{waiting.length ? ` · ${waiting.length} waiting for approval` : ''}</span>
+                  <span className="muted small"> · {plural(listed.length, 'blog')}{waiting.length ? ` · ${waiting.length} waiting for approval` : ''}</span>
                 </span>
                 {approvable.length > 0 && (
                   <button className="btn small-btn" type="button" disabled={busy} onClick={() => approveWeek(f, approvable)}>
@@ -474,7 +542,7 @@ function WeeklyFilesCard({ admin }) {
             </td>
           </tr>,
         );
-        for (const b of f.blogs) {
+        for (const b of listed) {
           const open = () => setBlogView({ name: f.name, row: b });
           rows.push(
             <tr
@@ -483,11 +551,25 @@ function WeeklyFilesCard({ admin }) {
             >
               <td className="nowrap">{b.publishDate ? fmtDay(b.publishDate) : <span className="muted">No date</span>}</td>
               <td className="name">
-                <div className="ellip wide">{b.topic || b.id || `Blog #${b.n}`}</div>
+                <div className="ellip wide">{headline(b) || b.id || `Blog #${b.n}`}</div>
                 {!b.hasContent && <Badge text="No content" tone="amber" />}
               </td>
               <td className="muted">{b.category || '—'}</td>
               <td><BlogStatus blog={b} /></td>
+              {admin && (
+                <td className="row-action">
+                  {removable(b) && (
+                    <button
+                      className="icon-btn" type="button" disabled={busy} title="Remove from this week"
+                      aria-label={`Remove ${b.id} from this week`}
+                      onClick={(e) => { e.stopPropagation(); removeRow(f, b, listed.length === 1); }}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <Icon name="trash" />
+                    </button>
+                  )}
+                </td>
+              )}
             </tr>,
           );
         }
@@ -499,7 +581,7 @@ function WeeklyFilesCard({ admin }) {
         {approvalProblem && <div className="notice">{approvalProblem}</div>}
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Date</th><th>Blog</th><th>Category</th><th>Status</th></tr></thead>
+            <thead><tr><th>Date</th><th>Blog</th><th>Category</th><th>Status</th>{admin && <th aria-label="Remove" />}</tr></thead>
             <tbody>{rows}</tbody>
           </table>
         </div>
@@ -514,20 +596,22 @@ function WeeklyFilesCard({ admin }) {
       {admin && (
         <div className="plan-upload">
           <div className="row week-pick">
-            <span>For <b>{chosen.label.replace(/ \(.*/, '')}</b> (next week)</span>
+            <span className="muted small">The week (Monday to Saturday) is read from the blogs&apos; dates. This week or a later one.</span>
             <input ref={input} type="file" accept="application/json,.json" hidden onChange={onFile} />
             <button className="btn outline" type="button" disabled={busy} onClick={() => input.current?.click()}>
               <Icon name="doc" /> Upload week JSON
             </button>
           </div>
-          <div className="muted small">Saved in Supabase Storage as <span className="mono">{chosen.fileName}</span></div>
           {msg.text && <div className="auth-msg" role="alert" aria-live="polite" data-tone={msg.tone}>{msg.text}</div>}
           {preview && <UploadPreview preview={preview} busy={busy} onSave={onSave} onCancel={() => setPreview(null)} />}
         </div>
       )}
+      {admin && mode === 'draft' && (
+        <div className="notice small">Test mode: Post today&apos;s blogs sends blogs to Dev.to as unpublished drafts (BLOG_POSTING=draft on the backend).</div>
+      )}
       {admin && dueToday > 0 && (
         <div className="row post-today">
-          <span className="small"><b>{plural(dueToday, 'approved blog')}</b> for today not posted yet.</span>
+          <span className="small"><b>{plural(dueToday, 'approved blog')}</b> for today not posted yet{mode === 'draft' ? ' (test mode: as drafts)' : ''}.</span>
           <button className="btn primary small-btn" type="button" disabled={busy} onClick={() => postToday(dueToday)}>
             <Icon name="check" /> Post today&apos;s blogs
           </button>
@@ -552,7 +636,7 @@ export default function BlogsView() {
     <main className="page">
       <div className="page-head"><h1 className="page-title">Blogs</h1><p className="muted">Which blog goes out on which day, from the weekly blog files, and every blog written so far.</p></div>
       <div className="stack-v">
-        <WeeklyFilesCard admin={admin} />
+        <WeeklyFilesCard admin={admin} onTrackerChange={reload} />
         <div className="card">
           <div className="blog-top">
             <div>

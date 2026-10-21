@@ -8,6 +8,7 @@
 import { requireAdmin, fail, handle } from '@/core/server/supabaseAdmin';
 import { approvalOf, isLocked, planDecisions } from '@/core/server/blogApproval';
 import { NAME, approvalRows, postRows, readFile, saveDecisions, storage } from '@/core/server/blogStore';
+import { blogToday } from '@/core/weeklyBlogs';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,7 @@ export const POST = handle(async (request) => {
     blogs: file.blogs,
     decisions: body.decisions,
     by: user.email,
-    today: new Date().toISOString().slice(0, 10),
+    today: blogToday(), // India time, like the backend that posts
     locked: new Set(posts.filter(isLocked).map((r) => r.blog_id)),
   });
   if (plan.problems.length) {

@@ -13,7 +13,7 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 | `GET /emails/replies/{id}`                                 | Bearer | one reply read from Gmail, with the email it answers |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |
 | `POST /inbox/check`, `POST /inbox/label`                 | Bearer | read new replies from the connected Gmail inbox (read only); a person's label for a reply (`app/inbox.py`) |
-| `POST /blog-posts/post-today`, `POST /blog-posts/post-again` | Admin | post today's approved blogs to Dev.to; post a failed one again (`app/blog_posts.py`) |
+| `POST /blog-posts/post-today`, `POST /blog-posts/post-again` | Admin | post today's approved blogs to Dev.to; post a failed or missed one, up to 3 days late (`app/blog_posts.py`) |
 
 Protect a new route with `user: dict = Depends(current_user)` (`app/auth.py`).
 
@@ -100,7 +100,9 @@ every blog approved for today that isn't posted yet, as the copy that was approv
 (`migrations/011_blog_posts.sql`). Each blog is claimed there as `posting` before Dev.to is called, and the claim checks
 the approval again, so a blog is never posted twice and a blog taken back is skipped. A failed blog is not retried on
 its own: an admin clicks **Post again** in the blog's window (Dev.to may have posted it even without an answer). There
-is no scheduled run yet: posting happens only on that click. The Blog Tracker (`GET /blogs`) lists the Marketing
+is no scheduled run yet: posting happens only on that click. A blog nobody posted on its day shows as **Missed**;
+"Post now" (the same `post-again` call) can still post it, like a failed one, up to 3 days after its date (`LATE_DAYS`).
+"Today" is India time everywhere (`BLOG_TIMEZONE` here, and the dashboard's `BLOG_TIMEZONE` in core/weeklyBlogs.js). The Blog Tracker (`GET /blogs`) lists the Marketing
 Agent's old posts (`content_posts`) and these.
 
 Run 010 and then 011 in the Supabase SQL editor **before** deploying (`GET /blogs` reads `blog_posts`). 011 lets

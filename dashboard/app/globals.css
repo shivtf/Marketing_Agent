@@ -142,6 +142,8 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
 .approval-reject textarea { width: 100%; margin-bottom: 8px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--card); color: var(--text); font: inherit; resize: vertical; }
 .approval-reject textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .approval-box .auth-msg { margin-top: 8px; }
+.row-action { width: 44px; padding-top: 0; padding-bottom: 0; }
+.row-action .icon-btn:hover { color: var(--red); background: var(--red-bg); }
 .post-today { justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; background: var(--green-bg); }
 
 @media (max-width: 760px) {

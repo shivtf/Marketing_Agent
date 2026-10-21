@@ -1,36 +1,29 @@
 // Weekly blog files: the JSON for one week (Monday to Saturday), stored as is in Supabase Storage, bucket
-// "blog-plans", named by its week, e.g. 12_10_26-17_10_26.json. Another backend picks the file up from the bucket;
-// here the blogs inside are read to show which blog goes out on which day (core/weeklyBlogs.js), and whether an admin
-// approved it: the publishing backend posts approved blogs only (app/api/blogs/approvals, core/server/blogApproval.js).
+// "blog-plans", named by its week, e.g. 12_10_26-17_10_26.json. The blogs inside are read to show which blog goes out
+// on which day (core/weeklyBlogs.js) and whether an admin approved it (app/api/blogs/approvals). The dashboard backend
+// posts approved blogs to Dev.to when an admin clicks Post today's blogs (dashboardbackend/app/blog_posts.py).
 //   GET                 -> [{ name, size, updatedAt, blogs, problem, approvalProblem }] newest week first (any signed-in
 //                          user). `blogs` (no content; each with `hash`, `approval` and `post`) for the newest
 //                          SCHEDULE_WEEKS files, null for older ones. approvalProblem: approvals couldn't be read
 //                          (approval: null). `post`: what the backend posted (blog_posts, migration 011), else null.
 //   GET ?name=<file>    -> { name, text, approvals: { [blog id]: { hash, approval, post } } } (any signed-in user)
-//   POST { week, text, replace } -> { name, replaced, unapproved } (admins; week = that week's Monday, "YYYY-MM-DD",
-//                          not over yet). The file must pass checkUpload (core/weeklyBlogs.js), else 400
-//                          { error, problems }. Replacing a file takes back the approvals of blogs it changes or drops
+//   POST { text, replace } -> { name, replaced, unapproved } (admins). The week is read from the blogs' dates (one
+//                          week, Monday to Saturday, not over yet) and names the file. The file must pass checkUpload
+//                          (core/weeklyBlogs.js), else 400 { error, problems }. Replacing a file takes back the approvals of blogs it changes or drops
 //                          (`unapproved`: their ids).
+//   DELETE { name, id, hash } -> { name, removed } (admins): takes one blog out of the file, and its approval, so it is
+//                          never posted. `hash` is the version the admin looked at (409 if the file changed since). Not
+//                          for a blog posted or being posted. The week's last blog takes the file with it. A failed attempt or a
+//                          Dev.to draft of it is forgotten too, so it no longer shows in the Blog Tracker.
 import { getCaller, requireAdmin, fail, handle } from '@/core/server/supabaseAdmin';
-import { approvalOf, blogsWithHash, postOf, staleApprovals } from '@/core/server/blogApproval';
-import { BUCKET, NAME, approvalRows, deleteApprovals, postRows, readFile, storage } from '@/core/server/blogStore';
+import { approvalOf, blogsWithHash, isLocked, planRemoval, postOf, staleApprovals } from '@/core/server/blogApproval';
+import { BUCKET, NAME, SAVE, approvalRows, deleteApprovals, deleteUnfinishedPosts, postRows, readFile, readFileCached, storage } from '@/core/server/blogStore';
 import { checkUpload } from '@/core/weeklyBlogs';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const SCHEDULE_WEEKS = 12; // newest files read for the schedule; older ones are listed only
-
-const ddmmyy = (d) => [d.getUTCDate(), d.getUTCMonth() + 1, d.getUTCFullYear() % 100].map((n) => String(n).padStart(2, '0')).join('_');
-
-// "2026-10-12" (a Monday) -> "12_10_26-17_10_26.json"; null when it isn't a real Monday.
-function fileName(week) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(week || '')) return null;
-  const monday = new Date(`${week}T00:00:00Z`);
-  if (Number.isNaN(monday.getTime()) || monday.toISOString().slice(0, 10) !== week || monday.getUTCDay() !== 1) return null;
-  const saturday = new Date(monday.getTime() + 5 * 86400000);
-  return `${ddmmyy(monday)}-${ddmmyy(saturday)}.json`;
-}
 
 // Sorts by the Monday in the name (DD_MM_YY), newest first.
 const weekKey = (name) => { const [d, m, y] = name.slice(0, 8).split('_'); return `${y}${m}${d}`; };
@@ -90,7 +83,7 @@ export const GET = handle(async (request) => {
     const recent = files.slice(0, SCHEDULE_WEEKS);
     const names = recent.map((f) => f.name);
     const [read, approvals, posts] = await Promise.all([
-      Promise.all(recent.map((f) => readFile(bucket, f.name))),
+      Promise.all(recent.map((f) => readFileCached(bucket, f.name, f.updatedAt))),
       approvalsOf(names),
       postsOf(names),
     ]);
@@ -122,16 +115,15 @@ export const POST = handle(async (request) => {
   const { error } = await requireAdmin(request);
   if (error) return error;
   const body = await request.json().catch(() => ({}));
-  const name = fileName(body.week);
-  if (!name) return fail('Pick the week (its Monday).', 400);
   const text = typeof body.text === 'string' ? body.text : '';
   if (!text.trim()) return fail('The file is empty.', 400);
   if (new TextEncoder().encode(text).length > MAX_BYTES) return fail('The file is larger than 5 MB.', 413);
   // The same check the page runs before showing the preview: a file sent past the page must pass it too.
-  const check = checkUpload(text, body.week);
+  const check = checkUpload(text);
   if (check.error) return fail(check.error, 400);
-  if (check.errors.length) {
-    const [first] = check.errors;
+  const name = check.fileName; // the week its dates are in
+  if (check.errors.length || !name) {
+    const [first = { id: '', message: 'No blog has a real publish_date, so the week is unknown.' }] = check.errors;
     const more = check.errors.length > 1 ? ` (and ${check.errors.length - 1} more)` : '';
     return Response.json({ error: `${first.id ? `${first.id}: ` : ''}${first.message}${more}`, problems: check.errors },
       { status: 400 });
@@ -150,10 +142,58 @@ export const POST = handle(async (request) => {
     console.error('[api]', err.message);
     return fail(`Could not check the approvals of ${name}, so it was not saved (is migration 010 applied?).`, 503);
   }
-  const { error: err } = await bucket.upload(name, new Blob([text], { type: 'application/json' }), {
-    contentType: 'application/json',
-    upsert: exists,
-  });
+  const { error: err } = await bucket.upload(name, new Blob([text], { type: 'application/json' }), { ...SAVE, upsert: exists });
   if (err) return fail(`Could not save ${name}: ${err.message}`, 500);
   return Response.json({ name, replaced: exists, unapproved }, { status: exists ? 200 : 201 });
+});
+
+export const DELETE = handle(async (request) => {
+  const { error } = await requireAdmin(request);
+  if (error) return error;
+  const body = await request.json().catch(() => ({}));
+  const name = typeof body.name === 'string' ? body.name : '';
+  const id = typeof body.id === 'string' ? body.id : '';
+  if (!NAME.test(name)) return fail('Unknown file.', 404);
+  const bucket = await storage();
+  // Without blog_posts (migration 011) nothing can have been posted; any other failure: don't guess (null).
+  const [file, posts] = await Promise.all([
+    readFile(bucket, name),
+    postRows([name]).catch((err) => (/does not exist|schema cache/i.test(err.message) ? [] : (console.error('[api]', err.message), null))),
+  ]);
+  if (file.missing) return fail('File not found.', 404);
+  if (file.problem) return fail(`Couldn't read ${name}: ${file.problem}`, 422);
+  if (!posts) return fail('Could not check what was posted, so it was not removed. Try again.', 503);
+  const plan = planRemoval({
+    json: JSON.parse(file.text), blogs: file.blogs, id, hash: body.hash,
+    locked: new Set(posts.filter(isLocked).map((r) => r.blog_id)),
+  });
+  if (plan.problem) return fail(plan.problem, plan.status);
+  // The approval goes first: the backend posts from blog_approval, so once it is gone the blog can't be posted, even
+  // if saving the file then fails.
+  try {
+    await deleteApprovals(name, [id]);
+  } catch (err) {
+    console.error('[api]', err.message);
+    return fail(`Could not take back its approval, so it was not removed (is migration 010 applied?).`, 503);
+  }
+  // Another admin may have changed the file meanwhile (removed another blog, replaced it): saving this copy would undo
+  // that. Read it again right before saving; if it changed, stop (the approval is already gone: the blog just waits).
+  const now = await readFile(bucket, name);
+  if (now.text !== file.text) {
+    return fail(`${name} was changed by someone else just now, so ${id} was not removed. Look again and retry.`, 409);
+  }
+  // The week's last blog: the file goes. Otherwise the file is saved without it.
+  let err;
+  if (plan.json.blogs.length) {
+    const text = `${JSON.stringify(plan.json, null, 2)}\n`;
+    ({ error: err } = await bucket.upload(name, new Blob([text], { type: 'application/json' }), { ...SAVE, upsert: true }));
+  } else {
+    ({ error: err } = await bucket.remove([name]));
+  }
+  if (err) return fail(`Its approval was taken back, but ${name} could not be saved: ${err.message}`, 500);
+  if (posts.some((r) => r.blog_id === id)) {
+    // Removed from the file either way; at worst a stale row stays in the Blog Tracker.
+    await deleteUnfinishedPosts(name, id).catch((e) => console.error('[api]', e.message));
+  }
+  return Response.json({ name, removed: id, fileDeleted: !plan.json.blogs.length });
 });
