@@ -114,6 +114,8 @@ export const getBlog = (id) => apiFetch(`/blogs/${encodeURIComponent(id)}`);
 // posted yet -> { mode: 'draft' | 'live', day, posted: [{ fileName, blogId, url, draft }], failed: [{ fileName, blogId,
 // error }], skipped }. 503 when posting is off on the backend.
 export const postTodaysBlogs = () => apiFetch('/blog-posts/post-today', { method: 'POST' });
+// What Post today's blogs does right now -> { mode: 'off' | 'draft' | 'live' }.
+export const getPostingMode = () => apiFetch('/blog-posts/mode');
 // One of today's blogs whose posting failed -> the same shape.
 export const postBlogAgain = (fileName, blogId) => apiFetch('/blog-posts/post-again', {
   method: 'POST',

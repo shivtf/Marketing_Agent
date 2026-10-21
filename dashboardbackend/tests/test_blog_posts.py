@@ -20,3 +20,23 @@ def test_posting_mode_defaults_to_off(monkeypatch):
     assert blog_posts.posting_mode() == "live"
     monkeypatch.setenv("BLOG_POSTING", "yes")
     assert blog_posts.posting_mode() == "off"
+
+
+def test_the_headline_is_the_title_when_there_is_one():
+    blog = {"id": "B1", "title": "The real title", "topic": "What it is about", "content": "Text."}
+    assert blog_posts.article(blog)[0] == "The real title"
+    assert blog_posts.article({**blog, "title": "  "})[0] == "What it is about"
+
+
+def test_the_page_can_ask_for_the_mode(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.auth import current_user
+    from app.main import app
+
+    app.dependency_overrides[current_user] = lambda: {"sub": "u1"}
+    try:
+        monkeypatch.setenv("BLOG_POSTING", "draft")
+        assert TestClient(app).get("/blog-posts/mode").json() == {"mode": "draft"}
+    finally:
+        app.dependency_overrides.clear()

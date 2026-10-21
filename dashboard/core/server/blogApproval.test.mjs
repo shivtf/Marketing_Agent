@@ -1,7 +1,7 @@
 // Tests for the blog approval rules. Run: node --test core/server/blogApproval.test.mjs (from dashboard/). No network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { approvalOf, blogHash, blogsWithHash, isLocked, planDecisions, postOf, staleApprovals } from './blogApproval.js';
+import { approvalOf, blogHash, blogsWithHash, isLocked, planDecisions, planRemoval, postOf, staleApprovals } from './blogApproval.js';
 
 const blog = (id, day, extra = {}) => ({ id, topic: `Topic ${id}`, publish_date: day, content: '# Hi', ...extra });
 const fileOf = (...blogs) => blogsWithHash({ blogs }).blogs;
@@ -122,4 +122,27 @@ test('a post row becomes what the page shows', () => {
   assert.equal(postOf(null), null);
   assert.deepEqual(postOf({ status: 'failed', draft: false, url: null, error: 'boom', started_at: 's', posted_at: null }),
     { status: 'failed', draft: false, url: '', error: 'boom', at: 's' });
+});
+
+test('removing a blog leaves every other blog as written, and refuses what it must', () => {
+  const json = { note: 'kept', blogs: [blog('B1', '2026-10-26'), blog('B2', '2026-10-27', { extra: 1 })] };
+  const blogs = blogsWithHash(json).blogs;
+  const remove = (id, hash = byId(blogs, id)?.hash, locked) => planRemoval({ json, blogs, id, hash, locked });
+  assert.deepEqual(remove('B1').json, { note: 'kept', blogs: [blog('B2', '2026-10-27', { extra: 1 })] });
+  assert.equal(remove('B9', 'x').status, 404);
+  assert.equal(remove('B1', 'old').status, 409);
+  assert.equal(remove('B1', undefined, new Set(['B1'])).status, 400);
+  const one = { blogs: [blog('B1', '2026-10-26')] };
+  assert.deepEqual(planRemoval({ json: one, blogs: blogsWithHash(one).blogs, id: 'B1', hash: blogsWithHash(one).blogs[0].hash }).json,
+    { blogs: [] }); // the last one: the route deletes the file
+  const twice = { blogs: [blog('B1', '2026-10-26'), blog('B1', '2026-10-27')] };
+  assert.equal(planRemoval({ json: twice, blogs: blogsWithHash(twice).blogs, id: 'B1', hash: 'x' }).status, 400);
+});
+
+test('a blog with no content can\'t be approved (posting would fail), but can be rejected', () => {
+  const blogs = fileOf(blog('B1', '2026-10-26', { content: '  ' }));
+  const [b] = blogs;
+  assert.deepEqual(decide(blogs, [{ id: 'B1', status: 'approved', hash: b.hash }]).problems.map((x) => x.message),
+    ['It has no content, so it can\'t be posted: fix the file first.']);
+  assert.equal(decide(blogs, [{ id: 'B1', status: 'rejected', reason: 'empty', hash: b.hash }]).upserts.length, 1);
 });

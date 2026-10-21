@@ -71,6 +71,7 @@ export function planDecisions({ fileName, blogs, decisions, by, today, locked = 
     if (d.status === 'approved') {
       if (!isDay(blog.publishDate)) { problem(id, 'Its publish_date is not a real date: fix the file first.'); continue; }
       if (blog.publishDate < today) { problem(id, `Its date (${blog.publishDate}) has passed.`); continue; }
+      if (!blog.content.trim()) { problem(id, 'It has no content, so it can\'t be posted: fix the file first.'); continue; }
     }
     out.upserts.push({
       file_name: fileName,
@@ -95,3 +96,17 @@ export function postOf(row) {
 
 // Posted or being posted, for real: such a blog's approval can't change (a Dev.to draft doesn't count).
 export const isLocked = (row) => !!row && (row.status === 'posting' || (row.status === 'posted' && !row.draft));
+
+// An admin removes one blog from a weekly file (Blogs page). `json` is the parsed file, `blogs` its blogsWithHash list,
+// `hash` the version the admin looked at, `locked` the ids posted or being posted. -> { json } (the file without that
+// blog, every other blog exactly as written; an empty list when it was the last one: the caller deletes the file) or
+// { problem, status }. The caller also deletes the blog's approval: the
+// backend posts from blog_approval, not from the file.
+export function planRemoval({ json, blogs, id, hash, locked = new Set() }) {
+  const matches = blogs.filter((b) => b.id && b.id === id);
+  if (!matches.length) return { problem: 'This blog is not in the file.', status: 404 };
+  if (matches.length > 1) return { problem: 'This id is used more than once in the file: fix the file first.', status: 400 };
+  if (matches[0].hash !== hash) return { problem: 'The file was replaced since you opened it: look at the blog again.', status: 409 };
+  if (locked.has(id)) return { problem: 'It is already posted (or being posted), so it can\'t be removed.', status: 400 };
+  return { json: { ...json, blogs: json.blogs.filter((_, i) => i !== matches[0].n - 1) } };
+}

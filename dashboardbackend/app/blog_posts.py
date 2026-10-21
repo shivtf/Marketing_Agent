@@ -6,10 +6,13 @@ every blog approved for today (BLOG_TIMEZONE) that isn't posted yet is posted, o
 approved. Each one is first claimed in blog_posts (migrations/011_blog_posts.sql) as 'posting', and the claim checks
 the approval again, so a blog taken back is skipped and a second click, or another server, never posts it twice.
 Nothing is retried on its own: a failed blog waits for an admin's "Post again" (POST /blog-posts/post-again), because
-Dev.to may have posted it even though no answer came back.
+Dev.to may have posted it even though no answer came back. The same call posts an approved blog nobody posted on its
+day. Both up to LATE_DAYS after the blog's date.
 
+  GET  /blog-posts/mode                             -> { mode: off | draft | live } (any signed-in user)
   POST /blog-posts/post-today                       -> { mode, day, posted, failed, skipped }
-  POST /blog-posts/post-again { fileName, blogId }  -> the same, for that one blog (failed, or stuck while 'posting')
+  POST /blog-posts/post-again { fileName, blogId }  -> the same, for that one blog: failed, stuck while 'posting', or
+                                                       missed (approved, never posted), dated today or LATE_DAYS before
 
 Settings (Render): BLOG_POSTING = off (default: nothing is posted) | draft (Dev.to drafts, for testing) | live;
 DEVTO_API_KEY; BLOG_TIMEZONE (default Asia/Kolkata). Admins only. Errors are 503 / 502 / 422, never 401 / 409 (the
@@ -38,6 +41,7 @@ router = APIRouter(prefix="/blog-posts", dependencies=[Depends(current_user)])
 Admin = Annotated[dict, Depends(current_admin)]
 
 DEVTO_URL = "https://dev.to/api/articles"
+LATE_DAYS = 3  # how long after its date a failed or missed blog may still be posted (the dashboard's LATE_DAYS)
 MIGRATION = "Run migrations/010_blog_approval.sql and 011_blog_posts.sql in the Supabase SQL editor first."
 _lock = asyncio.Lock()  # one posting run at a time in this process; the blog_posts claim guards the rest
 
@@ -78,9 +82,10 @@ def devto_tags(keywords) -> list[str]:
 
 
 def article(blog: dict) -> tuple[str, str, list[str]]:
-    """The approved blog (as written in the weekly file) -> (title, markdown body, tags). Dev.to shows the title
-    above the post, so a '# heading' first line in the content is left out."""
-    title = str(blog.get("topic") or "").strip() or str(blog.get("id") or "").strip()
+    """The approved blog (as written in the weekly file) -> (title, markdown body, tags). The headline is its `title`,
+    else its `topic` (older files have no title), else its id. Dev.to shows the title above the post, so a '# heading'
+    first line in the content is left out."""
+    title = next((str(blog.get(k)).strip() for k in ("title", "topic", "id") if str(blog.get(k) or "").strip()), "")
     body = blog.get("content") if isinstance(blog.get("content"), str) else ""
     lines = body.strip().splitlines()
     if lines and re.match(r"^#\s+\S", lines[0]):
@@ -118,12 +123,12 @@ async def post_to_devto(title: str, body: str, tags: list[str], publish: bool) -
 
 # ---------- Claim, post, record ----------
 
-_DUE = """
-select file_name, blog_id, blog, blog_hash from blog_approval
-where status = 'approved' and publish_date = $1
+_APPROVED = """
+select file_name, blog_id, blog, blog_hash, publish_date from blog_approval
+where status = 'approved'
 """
 
-# Takes the blog for posting if it is still approved, for this day and this version, and nobody posted it. A blog
+# Takes the blog for posting if it is still approved, for its day ($8) and this version, and nobody posted it. A blog
 # already in blog_posts is taken again only when it was posted as a draft and posting is now live, or, on "Post
 # again" ($9), when it failed or has been left 'posting' for 15 minutes (the server stopped mid-post). -> its blog_posts id, or nothing.
 _CLAIM = """
@@ -141,14 +146,14 @@ returning id
 """
 
 
-async def _post_one(pool, row, day: date, mode: str, by: str, again: bool) -> dict | None:
+async def _post_one(pool, row, mode: str, by: str, again: bool) -> dict | None:
     """Posts one approved blog. -> { fileName, blogId, url, draft } or { fileName, blogId, error }; None when it was
     not taken (already posted or being posted, or no longer approved)."""
     blog = row["blog"] if isinstance(row["blog"], dict) else json.loads(row["blog"])
     title, body, tags = article(blog)
     draft = mode == "draft"
     post_id = await pool.fetchval(_CLAIM, row["file_name"], row["blog_id"], draft, title, body, row["blog_hash"], by,
-                                  day, again)
+                                  row["publish_date"], again)
     if post_id is None:
         return None
     out = {"fileName": row["file_name"], "blogId": row["blog_id"]}
@@ -177,7 +182,7 @@ async def _run(rows, day: date, by: str, again: bool) -> dict:
     pool = await _pg()
     result = {"mode": mode, "day": day.isoformat(), "posted": [], "failed": [], "skipped": 0}
     for row in rows:
-        done = await _post_one(pool, row, day, mode, by, again)
+        done = await _post_one(pool, row, mode, by, again)
         if done is None:
             result["skipped"] += 1
         else:
@@ -194,6 +199,12 @@ async def _guarded(work):
             raise HTTPException(503, MIGRATION) from exc
 
 
+@router.get("/mode")
+async def mode() -> dict:
+    """What Post today's blogs does right now, so the page can say so (and hide the button while posting is off)."""
+    return {"mode": posting_mode()}
+
+
 @router.post("/post-today")
 async def post_today(admin: Admin) -> dict:
     """Posts every blog approved for today that isn't posted yet."""
@@ -201,7 +212,7 @@ async def post_today(admin: Admin) -> dict:
 
     async def work():
         day = today()
-        rows = await (await _pg()).fetch(_DUE + " order by file_name, blog_id", day)
+        rows = await (await _pg()).fetch(_APPROVED + " and publish_date = $1 order by file_name, blog_id", day)
         return await _run(rows, day, by, again=False)
 
     return await _guarded(work)
@@ -209,14 +220,17 @@ async def post_today(admin: Admin) -> dict:
 
 @router.post("/post-again")
 async def post_again(body: PostAgainIn, admin: Admin) -> dict:
-    """Posts one of today's approved blogs whose posting failed (or stopped half way)."""
+    """Posts one approved blog whose posting failed, stopped half way, or never happened (missed), up to LATE_DAYS
+    after its date."""
     by = admin.get("email") or admin["sub"]
 
     async def work():
         day = today()
-        rows = await (await _pg()).fetch(_DUE + " and file_name = $2 and blog_id = $3", day, body.fileName, body.blogId)
+        rows = await (await _pg()).fetch(
+            _APPROVED + " and publish_date between $1::date - $4::int and $1 and file_name = $2 and blog_id = $3",
+            day, body.fileName, body.blogId, LATE_DAYS)
         if not rows:
-            raise HTTPException(422, "Only a blog approved for today can be posted.")
+            raise HTTPException(422, f"Only an approved blog dated today or up to {LATE_DAYS} days ago can be posted.")
         result = await _run(rows, day, by, again=True)
         if result["skipped"]:
             raise HTTPException(422, "This blog is already posted or being posted.")
