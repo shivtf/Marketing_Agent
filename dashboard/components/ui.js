@@ -37,8 +37,9 @@ export const CardHead = ({ icon, title, children }) => (
   </div>
 );
 
-export const MetaRow = ({ k, children }) => (
-  <div className="meta-row"><span className="k">{k}</span><span className="v">{children}</span></div>
+// block: a long text (a paragraph) goes under its label, full width and left-aligned, instead of beside it.
+export const MetaRow = ({ k, block, children }) => (
+  <div className={block ? 'meta-row block' : 'meta-row'}><span className="k">{k}</span><span className="v">{children}</span></div>
 );
 
 export const ViewCell = () => <td className="view"><span aria-label="View"><Icon name="eye" /></span></td>;
