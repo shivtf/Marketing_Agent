@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { Skeleton, ErrorBox } from './ui';
 import { FormattedContent } from './FormattedContent';
+import { Markdown } from './Markdown';
 import { toSection, useLeadsFilter, useList, useSection } from './DataProvider';
 import { getKinds } from './drawerKinds';
 import { neighbours } from '@/core/listStep';
@@ -165,9 +166,11 @@ export function DrawerProvider({ children }) {
                   {v.body != null && (
                     <>
                       <h3 className="body-title">{v.bodyTitle}</h3>
-                      {v.bodyBox
-                        ? <div className="notes">{v.body}</div>
-                        : <div className="content"><FormattedContent text={v.body} /></div>}
+                      {v.bodyBox && <div className="notes">{v.body}</div>}
+                      {!v.bodyBox && v.markdown && (v.body.trim()
+                        ? <div className="content"><Markdown text={v.body} /></div>
+                        : <div className="muted">No content.</div>)}
+                      {!v.bodyBox && !v.markdown && <div className="content"><FormattedContent text={v.body} /></div>}
                     </>
                   )}
                 </>

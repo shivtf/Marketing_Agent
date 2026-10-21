@@ -31,7 +31,18 @@ export function readBlogs(json) {
   return { blogs };
 }
 
-const isDay = (s) => {
+// The blog a schedule row points to, in the file as it is now. By id: positions move when a file is replaced. A blog
+// without an id (files saved before ids were required) only by its position, and only while its topic is the same.
+// -> { blog, changed } (changed: its topic or date is no longer what the row showed), or null when it is gone.
+export function findBlog(blogs, row) {
+  const blog = row.id
+    ? blogs.find((b) => b.id === row.id)
+    : blogs.find((b) => b.n === row.n && !b.id && b.topic === row.topic);
+  if (!blog) return null;
+  return { blog, changed: blog.topic !== row.topic || blog.publishDate !== row.publishDate };
+}
+
+export const isDay = (s) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const d = new Date(`${s}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s; // 2026-02-30 rolls over: not a real day
@@ -63,4 +74,27 @@ export function checkWeek(blogs, monday) {
     if (count > 1) warnings.push({ id: '', message: `${count} blogs are on ${day}.` });
   }
   return { errors, warnings };
+}
+
+// The Monday of the week `today` is in, 'YYYY-MM-DD' (UTC).
+export function thisMonday(today = new Date()) {
+  const ymd = today.toISOString().slice(0, 10);
+  return addDays(ymd, -((today.getUTCDay() + 6) % 7));
+}
+
+// The whole check for a file uploaded for the week starting `monday`, run by the browser (to show the preview) and
+// again by the server (before saving: the browser's check can be skipped). Weeks already over are refused.
+// -> { error } when it can't be read at all, else { blogs, errors, warnings } (errors stop the upload).
+export function checkUpload(text, monday, today = new Date()) {
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return { error: 'The file is not valid JSON. Check for a missing comma or bracket.' };
+  }
+  const read = readBlogs(json);
+  if (read.error) return read;
+  const result = { blogs: read.blogs, ...checkWeek(read.blogs, monday) };
+  if (monday < thisMonday(today)) result.errors.unshift({ id: '', message: `The week of ${monday} is already over.` });
+  return result;
 }

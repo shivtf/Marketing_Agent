@@ -118,6 +118,31 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
 .content a, .meta a { color: var(--accent); text-decoration: none; }
 .content a:hover, .meta a:hover { text-decoration: underline; }
 .content blockquote { margin: 0 0 14px; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+/* Markdown (blogs, components/Markdown.js): code, tables, images, rules. */
+.content h6 { margin: 14px 0 6px; font-size: 13.5px; font-weight: 700; }
+.content li > p { margin: 0; }
+.content li > ul, .content li > ol { margin: 4px 0 0; }
+.content code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; padding: 1px 5px; border-radius: 5px; background: var(--line); border: 1px solid var(--border); overflow-wrap: anywhere; }
+.content pre { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: var(--line); border: 1px solid var(--border); overflow-x: auto; white-space: pre; line-height: 1.5; }
+.content pre code { padding: 0; border: 0; background: none; font-size: 12.5px; overflow-wrap: normal; }
+.content .md-table { margin: 0 0 14px; overflow-x: auto; }
+.content .md-table table { border-collapse: collapse; font-size: 13px; }
+.content .md-table th, .content .md-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; white-space: normal; position: static; }
+.content img { max-width: 100%; height: auto; border-radius: 8px; }
+.content hr { margin: 16px 0; }
+.content input[type="checkbox"] { margin: 0 6px 0 0; vertical-align: middle; }
+/* Blog approval (Blogs page): week heading rows in the schedule, and the box at the top of the blog viewer. */
+.week-row td { background: var(--row-hover); padding-top: 10px; padding-bottom: 10px; }
+.week-row-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.approval-box { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; background: var(--card); }
+.approval-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.approval-box p { margin: 0 0 10px; }
+.approval-box p:last-child { margin-bottom: 0; }
+.approval-actions { gap: 8px; flex-wrap: wrap; }
+.approval-reject textarea { width: 100%; margin-bottom: 8px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--card); color: var(--text); font: inherit; resize: vertical; }
+.approval-reject textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.approval-box .auth-msg { margin-top: 8px; }
+.post-today { justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; background: var(--green-bg); }
 
 @media (max-width: 760px) {
   .grid2 { grid-template-columns: 1fr; }
@@ -353,7 +378,7 @@ dialog.confirm::backdrop { background: rgba(20, 22, 43, .35); backdrop-filter: b
 dialog.file-view { width: min(860px, calc(100% - 32px)); }
 .file-view-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .file-view-head .confirm-title { font-size: 16px; overflow-wrap: anywhere; }
-.blog-view { white-space: normal; font-size: 14px; background: var(--card); }
+.file-view-body.blog-view { white-space: normal; font-size: 14px; background: var(--card); } /* beats .file-view-body's pre-wrap */
 .blog-view .meta { margin-top: 0; }
 .card-note { margin: -6px 0 14px; }
 tr.click-row { cursor: pointer; }

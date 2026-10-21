@@ -110,3 +110,13 @@ export const getReply = (id) => apiFetch(`/emails/replies/${encodeURIComponent(i
 
 export const getBlogs = ({ page, limit } = {}) => apiFetch(`/blogs${qs({ page, limit })}`);
 export const getBlog = (id) => apiFetch(`/blogs/${encodeURIComponent(id)}`);
+// Posting approved blogs to Dev.to (dashboardbackend/app/blog_posts.py, admins). Every blog approved for today that isn't
+// posted yet -> { mode: 'draft' | 'live', day, posted: [{ fileName, blogId, url, draft }], failed: [{ fileName, blogId,
+// error }], skipped }. 503 when posting is off on the backend.
+export const postTodaysBlogs = () => apiFetch('/blog-posts/post-today', { method: 'POST' });
+// One of today's blogs whose posting failed -> the same shape.
+export const postBlogAgain = (fileName, blogId) => apiFetch('/blog-posts/post-again', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ fileName, blogId }),
+});

@@ -13,6 +13,7 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 | `GET /emails/replies/{id}`                                 | Bearer | one reply read from Gmail, with the email it answers |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |
 | `POST /inbox/check`, `POST /inbox/label`                 | Bearer | read new replies from the connected Gmail inbox (read only); a person's label for a reply (`app/inbox.py`) |
+| `POST /blog-posts/post-today`, `POST /blog-posts/post-again` | Admin | post today's approved blogs to Dev.to; post a failed one again (`app/blog_posts.py`) |
 
 Protect a new route with `user: dict = Depends(current_user)` (`app/auth.py`).
 
@@ -89,6 +90,27 @@ in the Supabase SQL editor (after 006 and 007), set its password (`alter role da
 (`dashboard_presence`, `inbox_replies`, `inbox_seen`, `reply_labels`), call `submit_manual_contact()`, and reach Supabase
 Auth only through four narrow functions in that file. The backend needs 009 (applied on Supabase): the sign-in check
 calls those functions, whichever login DATABASE_URL uses, so a new database must run 009 before the backend starts.
+
+## Posting blogs (Dev.to)
+
+The Marketing Agent no longer posts blogs; this backend does (`app/blog_posts.py`). The dashboard's own server writes
+`blog_approval` (`migrations/010_blog_approval.sql`) with the service key when an admin approves or rejects a blog of a
+weekly blog file. When an admin clicks **Post today's blogs** on the Blogs page, `POST /blog-posts/post-today` posts
+every blog approved for today that isn't posted yet, as the copy that was approved, and records it in `blog_posts`
+(`migrations/011_blog_posts.sql`). Each blog is claimed there as `posting` before Dev.to is called, and the claim checks
+the approval again, so a blog is never posted twice and a blog taken back is skipped. A failed blog is not retried on
+its own: an admin clicks **Post again** in the blog's window (Dev.to may have posted it even without an answer). There
+is no scheduled run yet: posting happens only on that click. The Blog Tracker (`GET /blogs`) lists the Marketing
+Agent's old posts (`content_posts`) and these.
+
+Run 010 and then 011 in the Supabase SQL editor **before** deploying (`GET /blogs` reads `blog_posts`). 011 lets
+`dashboard_backend` read `blog_approval` (not write it) and keep `blog_posts`. Settings on Render:
+
+| Variable        | Value |
+|-----------------|-------|
+| `BLOG_POSTING`  | `off` (default: nothing is posted), `draft` (Dev.to drafts, to test), `live` |
+| `DEVTO_API_KEY` | from dev.to → Settings → Extensions → DEV Community API Keys |
+| `BLOG_TIMEZONE` | which day is "today"; default `Asia/Kolkata` |
 
 Every request is refused with 503 while the sign-in check cannot reach the database (never let through unchecked), so a
 removed account or a second sign-in can't slip in during an outage.

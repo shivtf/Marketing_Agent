@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.accounts import router as accounts_router
 from app.auth import current_user, release
+from app.blog_posts import router as blog_posts_router
 from app.data import router as data_router
 from app.inbox import check_every, check_interval
 from app.inbox import router as inbox_router
@@ -49,6 +50,7 @@ app.include_router(data_router)
 app.include_router(accounts_router)
 app.include_router(needs_contact_router)
 app.include_router(inbox_router)
+app.include_router(blog_posts_router)
 
 
 @app.get("/health")

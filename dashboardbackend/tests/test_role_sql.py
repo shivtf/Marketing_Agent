@@ -58,7 +58,7 @@ async def _seed(dsn):
     try:
         await conn.execute(SUPABASE)
         for name in ("001_dashboard_presence", "006_gmail_connection", "007_inbox_replies", "008_inbox_indexes",
-                     "009_dashboard_backend_role"):
+                     "009_dashboard_backend_role", "010_blog_approval", "011_blog_posts"):
             sql = (MIGRATIONS / f"{name}.sql").read_text()
             await conn.execute(sql)
             await conn.execute(sql)  # each is safe to run again

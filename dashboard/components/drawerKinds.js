@@ -2,7 +2,8 @@
 //   paged    -> a paged list (useList): Previous/Next step through the page on screen, or
 //   section + list(sectionData, leadsFilter, positiveView) -> items for Previous/Next,
 // and load(id) -> detail
-//   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox? }  (no body = no body section)
+//   describe(detail) -> { title, badge?, rows[], action?, bodyTitle?, body?, bodyBox?, markdown? }  (no body = no body section;
+//   markdown: the body is markdown, e.g. a blog, not an email)
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from './Icon';
@@ -242,7 +243,7 @@ export function getKinds(goto) {
             <Icon name="ext" /> View live post
           </a>
         ) : null,
-        bodyTitle: 'Content', body: `## ${d.title}\n\n${(d.content || '').replace(/^## /gm, '### ')}`,
+        bodyTitle: 'Content', body: d.content || '', markdown: true,
       };
     },
   };
