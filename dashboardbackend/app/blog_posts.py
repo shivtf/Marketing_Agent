@@ -5,8 +5,9 @@ migrations/010_blog_approval.sql). An admin then clicks "Post today's blogs", wh
 every blog approved for today (BLOG_TIMEZONE) that isn't posted yet is posted, one at a time, as the copy that was
 approved. Each one is first claimed in blog_posts (migrations/011_blog_posts.sql) as 'posting', and the claim checks
 the approval again, so a blog taken back is skipped and a second click, or another server, never posts it twice.
-Nothing is retried on its own: a failed blog waits for an admin's "Post again" (POST /blog-posts/post-again), because
-Dev.to may have posted it even though no answer came back. The same call posts an approved blog nobody posted on its
+Nothing is retried on its own: a failed blog waits for an admin's "Post again" (POST /blog-posts/post-again). Dev.to
+may have posted it even though no answer came back, so a blog tried before is first looked for on Dev.to (same title)
+and only recorded when it is already there. The same call posts an approved blog nobody posted on its
 day. Both up to LATE_DAYS after the blog's date.
 
   GET  /blog-posts/mode                             -> { mode: off | draft | live } (any signed-in user)
@@ -104,21 +105,45 @@ async def post_to_devto(title: str, body: str, tags: list[str], publish: bool) -
     except httpx.ConnectError as exc:
         raise PostError("Couldn't reach Dev.to, so nothing was posted. Try Post again.") from exc
     except httpx.HTTPError as exc:  # sent, but no answer: it may be on Dev.to anyway
-        raise PostError("Dev.to didn't answer. It may have posted it anyway: check Dev.to before Post again.") from exc
+        raise PostError("Dev.to didn't answer. It may have posted it anyway: Post again looks there first.") from exc
     if res.status_code in (401, 403):
         raise PostError("Dev.to refused the API key (DEVTO_API_KEY on the backend).")
     if res.status_code == 429:
         raise PostError("Dev.to asked to slow down. Try Post again in a minute.")
     if res.status_code >= 500:
-        raise PostError(f"Dev.to had an error ({res.status_code}). Check Dev.to before Post again.")
+        raise PostError(f"Dev.to had an error ({res.status_code}). Post again looks there first.")
     if res.status_code >= 400:
         try:
             detail = res.json().get("error") or res.text
         except ValueError:
             detail = res.text
         raise PostError(f"Dev.to refused it ({res.status_code}): {str(detail)[:300]}")
-    data = res.json()
+    try:
+        data = res.json()
+    except ValueError:  # it took the post (2xx) but its answer can't be read: posted, address unknown
+        log.warning("Dev.to answered %s without JSON", res.status_code)
+        return "", ""
     return str(data.get("url") or ""), str(data.get("id") or "")
+
+
+async def find_on_devto(title: str, published: bool) -> tuple[str, str] | None:
+    """A post of ours on Dev.to with this exact title, published or a draft as asked -> (url, Dev.to id), or None.
+    Looked up before a blog is posted again, because an earlier try may have reached Dev.to without our knowing (no
+    answer, or the server stopped before recording it). Only our latest 100 posts are looked at."""
+    key = os.environ.get("DEVTO_API_KEY", "").strip()
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(f"{DEVTO_URL}/me/all", params={"per_page": 100},
+                                   headers={"api-key": key, "Accept": "application/vnd.forem.api-v1+json"})
+        res.raise_for_status()
+        posts = res.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise PostError("Couldn't check Dev.to for a copy posted earlier, so nothing was posted. "
+                        "Try Post again in a minute.") from exc
+    for a in posts if isinstance(posts, list) else []:
+        if (a.get("title") or "").strip() == title.strip() and bool(a.get("published")) == published:
+            return str(a.get("url") or ""), str(a.get("id") or "")
+    return None
 
 
 # ---------- Claim, post, record ----------
@@ -142,32 +167,55 @@ on conflict (file_name, blog_id) do update
       attempts = p.attempts + 1, url = null, site_post_id = null, error = null, posted_at = null
   where (p.status = 'posted' and p.draft and not excluded.draft)
      or ($9 and (p.status = 'failed' or (p.status = 'posting' and p.started_at < now() - interval '15 minutes')))
-returning id
+returning id, attempts
 """
+_POSTED = "update blog_posts set status = 'posted', url = $2, site_post_id = $3, posted_at = now() where id = $1"
 
 
 async def _post_one(pool, row, mode: str, by: str, again: bool) -> dict | None:
     """Posts one approved blog. -> { fileName, blogId, url, draft } or { fileName, blogId, error }; None when it was
-    not taken (already posted or being posted, or no longer approved)."""
+    not taken (already posted or being posted, or no longer approved). A blog tried before is first looked for on
+    Dev.to, and recorded instead of posted when it is already there, so it is never posted twice."""
     blog = row["blog"] if isinstance(row["blog"], dict) else json.loads(row["blog"])
     title, body, tags = article(blog)
     draft = mode == "draft"
-    post_id = await pool.fetchval(_CLAIM, row["file_name"], row["blog_id"], draft, title, body, row["blog_hash"], by,
-                                  row["publish_date"], again)
-    if post_id is None:
+    claim = await pool.fetchrow(_CLAIM, row["file_name"], row["blog_id"], draft, title, body, row["blog_hash"], by,
+                                row["publish_date"], again)
+    if claim is None:
         return None
+    post_id = claim["id"]
     out = {"fileName": row["file_name"], "blogId": row["blog_id"]}
     try:
         if not body:
             raise PostError("The blog has no content.")
-        url, site_id = await post_to_devto(title, body, tags, publish=not draft)
+        found = await find_on_devto(title, published=not draft) if claim["attempts"] > 1 else None
+        if found:
+            url, site_id = found
+            log.info("Blog %s / %s was already on Dev.to: recorded, not posted again", row["file_name"], row["blog_id"])
+        else:
+            url, site_id = await post_to_devto(title, body, tags, publish=not draft)
     except PostError as exc:
         await pool.execute("update blog_posts set status = 'failed', error = $2 where id = $1", post_id, str(exc))
         log.warning("Blog %s / %s not posted: %s", row["file_name"], row["blog_id"], exc)
         return {**out, "error": str(exc)}
-    await pool.execute(
-        "update blog_posts set status = 'posted', url = $2, site_post_id = $3, posted_at = now() where id = $1",
-        post_id, url, site_id)
+    if not url and not found:  # posted, but its address didn't come back: look it up (best effort)
+        try:
+            url, site_id = await find_on_devto(title, published=not draft) or (url, site_id)
+        except PostError:
+            pass
+    # It is on Dev.to now: record it, retrying a few times. If the database still refuses, the row stays 'posting', and
+    # Post again (after 15 minutes) finds the post on Dev.to instead of posting it twice.
+    for attempt in range(3):
+        try:
+            await pool.execute(_POSTED, post_id, url, site_id)
+            break
+        except (asyncpg.PostgresError, OSError):
+            if attempt == 2:
+                log.error("Blog %s / %s posted to Dev.to (%s) but not recorded", row["file_name"], row["blog_id"], url,
+                          exc_info=True)
+                return {**out, "error": f"Posted to Dev.to ({url or 'address unknown'}), but couldn't record it. "
+                                       "In 15 minutes, Post again records it without posting it twice."}
+            await asyncio.sleep(1 + attempt)
     log.info("Blog %s / %s posted to Dev.to%s by %s: %s", row["file_name"], row["blog_id"],
              " as a draft" if draft else "", by, url)
     return {**out, "url": url, "draft": draft}

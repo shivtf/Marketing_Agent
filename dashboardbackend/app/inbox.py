@@ -12,11 +12,14 @@ Each message is looked at once (inbox_seen), unless the reply or bounce saved fr
 a test-lead cleanup): then it is read again. Another exception: mail judged
 "not a reply" is looked at again (recent mail only, a few per check) when one of our emails was recorded after it was
 seen, so a reply that arrived before its lead or email was in the database is still found. Nothing is ever sent,
-labelled, marked as read or deleted, and the agent's tables (emails, contacts, ...) are only read.
+labelled, marked as read or deleted in Gmail, and the agent's tables (emails, contacts, ...) are only read. The one
+exception is a person's Unsubscribe label, which puts the reply's addresses on the agent's do-not-email list (migration
+012).
 
   POST /inbox/check  -> { checked, newReplies, processed, remaining, rechecked, followUpsChecked, since,
                           repliesWithoutLead }
-  POST /inbox/label  { replyId, label | null } -> { ok }: a person's label for a reply (null removes it)
+  POST /inbox/label  { replyId, label | null } -> { ok }: a person's label for a reply (null removes it); unsubscribe
+                     also stops the mail agent emailing that address
 
 Needs migrations/007_inbox_replies.sql; until it has been run both answer 503 saying so. Errors are 503 / 502 with a
 readable detail, never 401 / 409 (the dashboard signs the user out on those).
@@ -57,6 +60,8 @@ THREADS_PER_CHECK = 10  # conversations looked at per check for an answer of our
 RECHECK_DAYS = 14  # mail judged "not a reply" is looked at again only while this recent
 RECHECK_PER_CHECK = 25  # and at most this many per check
 MIGRATION = "Run migrations/007_inbox_replies.sql in the Supabase SQL editor first."
+SUPPRESS_MIGRATION = ("Not saved: an Unsubscribe label also stops the mail agent emailing them, which needs "
+                      "migrations/012_unsubscribe_suppression.sql. Run it in the Supabase SQL editor first.")
 _THREAD_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _lock = asyncio.Lock()  # one check at a time in this process; the unique Gmail ids guard the rest
 
@@ -324,24 +329,35 @@ async def _refresh_follow_ups(pool: asyncpg.Pool, http: httpx.AsyncClient, token
 
 @router.post("/label")
 async def label(body: LabelIn, user: User) -> dict:
-    """Shown instead of any automatic label from now on. Nothing is sent and the mail agent does not see it: an
-    unsubscribe still has to be handled in the mail agent. reply_labels.source is always 'inbox' (the column is from
-    when the agent's replies could be labelled too)."""
+    """Shown instead of any automatic label from now on. Labelling a reply unsubscribe also puts its addresses (the
+    sender and the lead) on the mail agent's do-not-email list, and taking that label back lifts what was added
+    (migration 012: the backend can only do this through its functions). Nothing is sent. reply_labels.source is always
+    'inbox' (the column is from when the agent's replies could be labelled too)."""
+    by = user.get("email") or user["sub"]
     try:
         pool = await data._pg()
-        if not await pool.fetchval("select exists (select 1 from inbox_replies where id = $1)", body.replyId):
-            raise HTTPException(404, "This reply no longer exists.")
-        if body.label is None:
-            await pool.execute("delete from reply_labels where source = 'inbox' and reply_id = $1", body.replyId)
-        else:
-            await pool.execute(
-                """insert into reply_labels (source, reply_id, label, labelled_by) values ('inbox', $1, $2, $3)
-                   on conflict (source, reply_id) do update
-                     set label = excluded.label, labelled_by = excluded.labelled_by, labelled_at = now()""",
-                body.replyId, body.label, user.get("email") or user["sub"],
-            )  # fmt: skip
+        async with pool.acquire() as conn, conn.transaction():
+            if not await conn.fetchval("select exists (select 1 from inbox_replies where id = $1)", body.replyId):
+                raise HTTPException(404, "This reply no longer exists.")
+            before = await conn.fetchval(
+                "select label from reply_labels where source = 'inbox' and reply_id = $1 for update", body.replyId)
+            if body.label is None:
+                await conn.execute("delete from reply_labels where source = 'inbox' and reply_id = $1", body.replyId)
+            else:
+                await conn.execute(
+                    """insert into reply_labels (source, reply_id, label, labelled_by) values ('inbox', $1, $2, $3)
+                       on conflict (source, reply_id) do update
+                         set label = excluded.label, labelled_by = excluded.labelled_by, labelled_at = now()""",
+                    body.replyId, body.label, by,
+                )  # fmt: skip
+            if body.label == "unsubscribe":
+                await conn.fetchval("select dashboard_suppress($1, $2)", body.replyId, by)
+            elif before == "unsubscribe":
+                await conn.fetchval("select dashboard_unsuppress($1)", body.replyId)
     except asyncpg.UndefinedTableError as exc:
         raise HTTPException(503, MIGRATION) from exc
+    except asyncpg.UndefinedFunctionError as exc:
+        raise HTTPException(503, SUPPRESS_MIGRATION) from exc
     except asyncpg.PostgresError as exc:
         log.error("Could not save the label", exc_info=True)
         raise HTTPException(503, "Couldn't save the label: the database refused it. Try again.") from exc

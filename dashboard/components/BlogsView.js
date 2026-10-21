@@ -126,7 +126,7 @@ function PostPanel({ admin, name, blog, post, approval, onDone }) {
           <button className="btn small-btn" type="button" disabled={busy} onClick={again}>
             {busy ? 'Posting…' : missed ? 'Post now' : 'Post again'}
           </button>
-          {post?.status === 'failed' && <span className="muted small">Check Dev.to first if it says it may have posted it.</span>}
+          {post?.status === 'failed' && <span className="muted small">Post again looks on Dev.to first, so a blog that got there anyway is not posted twice.</span>}
         </div>
       )}
       {error && <div className="auth-msg" role="alert" data-tone="error">{error}</div>}

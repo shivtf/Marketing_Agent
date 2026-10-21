@@ -43,6 +43,11 @@ create table emails (
 create table content_posts (
   id uuid primary key default gen_random_uuid(), title text, status text, devto_url text, cms_url text,
   linkedin_url text, published_at timestamptz, body_md text, created_at timestamptz not null default now());
+-- The agent's do-not-email list (agent migration 0002); the dashboard reaches it only through migration 012.
+create table suppression_list (email_hash text primary key, reason text not null,
+  created_at timestamptz not null default now());
+create function email_hash(addr text) returns text language sql immutable as
+  $$ select encode(sha256(convert_to(lower(trim(addr)), 'UTF8')), 'hex') $$;
 -- The agent's one write the dashboard may call (Marketing-AI-Agent migration 0013): a stand-in that moves the lead on.
 create function submit_manual_contact(p_company uuid, p_email text, p_name text, p_role text, p_by text)
 returns text language plpgsql security definer as $$
@@ -58,7 +63,8 @@ async def _seed(dsn):
     try:
         await conn.execute(SUPABASE)
         for name in ("001_dashboard_presence", "006_gmail_connection", "007_inbox_replies", "008_inbox_indexes",
-                     "009_dashboard_backend_role", "010_blog_approval", "011_blog_posts"):
+                     "009_dashboard_backend_role", "010_blog_approval", "011_blog_posts",
+                     "012_unsubscribe_suppression"):
             sql = (MIGRATIONS / f"{name}.sql").read_text()
             await conn.execute(sql)
             await conn.execute(sql)  # each is safe to run again
@@ -140,6 +146,17 @@ def test_a_reply_its_label_and_the_sent_email(env):
     assert sent["replyId"] == row["replyId"] and sent["deliveryStatus"] == "Sent"
 
 
+def test_an_unsubscribe_label_reaches_the_do_not_email_list(env):
+    # As the limited login: only through migration 012's functions (it can't touch suppression_list itself).
+    c = env["client"]
+    reply = str(_as(env["dsn"], "select id from inbox_replies where gmail_message_id = 'g1'")[0]["id"])
+    count = "select count(*) as n from suppression_list where email_hash = email_hash('priya@acme.test')"
+    assert c.post("/inbox/label", headers=_auth(), json={"replyId": reply, "label": "unsubscribe"}).status_code == 200
+    assert _as(env["dsn"], count)[0]["n"] == 1
+    assert c.post("/inbox/label", headers=_auth(), json={"replyId": reply, "label": "interested"}).status_code == 200
+    assert _as(env["dsn"], count)[0]["n"] == 0
+
+
 def test_needs_contact_strongest_first_unscored_last(env):
     items = env["client"].get("/needs-contact", headers=_auth()).json()["items"]
     assert [i["company"] for i in items] == ["Strong", "Weak", "Unscored"]
@@ -163,6 +180,10 @@ def test_adding_a_contact_goes_through_the_agents_function(env):
     "delete from content_posts",
     "update gmail_connection set email = 'x'",
     "insert into gmail_connection (email, refresh_token) values ('x', 'y')",
+    "select * from suppression_list",
+    "insert into suppression_list (email_hash, reason) values ('x', 'manual')",
+    "delete from suppression_list",
+    "select * from dashboard_suppressions",
 ])
 def test_the_limited_login_can_do_nothing_more(env, sql):
     with pytest.raises(asyncpg.InsufficientPrivilegeError):

@@ -2,10 +2,11 @@
 // Page 4: Positive Leads. Every reply written by a person is its own row, judged on its own words (backend
 // /leads/positive): a lead's new email adds a row, and their older ones stay where they are.
 //   Positive      -> labelled interested, or a keyword score of 0.70 or more
-//   Needs review  -> a score between 0.40 and 0.70, or both a yes and a no
+//   Needs review  -> a score between 0.30 and 0.70, both a yes and a no, asks to be contacted later, or points to
+//                    someone else
 //   Questions     -> asked something (scope, pricing, process) before deciding
-//   Not interested -> said no (labelled, or a score below 0.40): listed so a misread "yes" can still be spotted
-//   Unsubscribe   -> asked to stop (or seems to): the mail agent has to act on it; the dashboard can't
+//   Not interested -> a clear no (labelled, or a score below 0.30): listed so a misread "yes" can still be spotted
+//   Unsubscribe   -> asked to stop (or seems to): a person's Unsubscribe label puts them on the agent's do-not-email list
 // The mail agent only sends: the backend reads every reply from Gmail (Check inbox; it also runs when the page opens, at
 // most every AUTO_CHECK_MINUTES) and scores it by keywords (app/reply_rules.py). A person's label in the drawer always
 // wins over the score.
@@ -29,13 +30,13 @@ const GROUPS = [
   { key: 'positive', label: 'Positive', kind: 'positiveLead', icon: 'check', empty: 'No positive leads yet',
     hint: 'Replied with interest: labelled interested, or their reply scored 0.70 or more (they want a call, details or to move forward).' },
   { key: 'review', label: 'Needs review', kind: 'reviewLead', icon: 'alert', empty: 'Nothing to review',
-    hint: 'The keywords gave no clear answer: a score between 0.40 and 0.70, or both a yes and a no. Open each one and choose a label; they are not counted as positive.' },
+    hint: 'The keywords gave no clear answer: a score between 0.30 and 0.70, both a yes and a no, a request to be contacted later, or a pointer to someone else. Open each one and choose a label; they are not counted as positive.' },
   { key: 'questions', label: 'Questions', kind: 'questionLead', icon: 'chat', empty: 'No open questions',
     hint: 'Asked about scope, pricing or process before deciding. Answer these quickly; they are not counted as positive.' },
   { key: 'notInterested', label: 'Not interested', kind: 'notInterestedLead', icon: 'close', empty: 'No one has said no',
-    hint: 'Said no (labelled, or a score below 0.40), so no answer is needed. Skim these in case a reply was misread.' },
+    hint: 'Said a clear no (labelled, or a score below 0.30), so no answer is needed. Skim these in case a reply was misread.' },
   { key: 'unsubscribe', label: 'Unsubscribe', kind: 'unsubscribeLead', icon: 'close', empty: 'Nobody has asked to stop',
-    hint: 'Unsubscribe requested — action required in the mail agent to stop future emails. The dashboard does not stop them.' },
+    hint: 'Asked to stop, or seems to. Open each one and label it Unsubscribe: that puts them on the mail agent’s do-not-email list, so it stops emailing them.' },
 ];
 
 function PositiveStatCards({ section }) {

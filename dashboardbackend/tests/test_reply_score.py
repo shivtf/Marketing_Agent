@@ -70,7 +70,7 @@ def test_questions(text, question):
     ("Thanks, sounds interesting. Can you send me the details?", "positive", None),  # 0.9 beats the question
     ("What does it cost?", "questions", None),
     ("No thanks.", "notInterested", None),
-    ("Not now.", "notInterested", None),
+    ("Not now.", "review", "Score 0.30: only a soft no (it may mean later)"),  # one soft no never closes a reply
     ("Sounds interesting.", "review", "Score 0.65: no clear yes or no"),
     ("Maybe, depends on timing.", "review", "No keywords matched"),
     ("Not right now, but let's talk in Q2", "review", "Score 0.55: says both yes and no"),
@@ -113,7 +113,7 @@ def _group(body, ours=OURS):
     ("Not interested.\n\nLe lun. 19 oct. 2026 à 10:00, Shivam <s@us.test> a écrit :\n" + OURS, "notInterested"),
     # Signature and sign-offs.
     ("Yes, let's set up a call on Tuesday.\n\nPlease don't hesitate to reach out.\n--\nJo", "positive"),
-    ("Not now.\n\nSent from my iPhone\n\nOn 19 Oct 2026, at 10:00, Shivam <s@us.test> wrote:\n\n" + OURS, "notInterested"),
+    ("Not now.\n\nSent from my iPhone\n\nOn 19 Oct 2026, at 10:00, Shivam <s@us.test> wrote:\n\n" + OURS, "review"),
     # Their company's footer is not a request from them.
     ("Sure, send me the deck.\n\nJo Smith | ACME\nTo unsubscribe from ACME marketing emails, click here.", "positive"),
     # Lines of our email pasted back without any quote marker are left out too.
@@ -147,3 +147,126 @@ def test_html_quotes_become_quoted_lines():
             "<blockquote>older</blockquote></blockquote></div><p>after</p>")
     assert html_to_text(html) == "No thanks.\n\n> Interested in a call?\n\n> > older\n\nafter"
     assert strip_quoted(html_to_text(html)) == "No thanks.\n\nafter"
+
+
+# ---------- Wording that used to land in the wrong group (2026-10-21 review) ----------
+# Each one was misread before: "I'm in a meeting" was Positive, "Too busy this week. Next week?" was closed as Not
+# interested, "No more emails please" was not flagged.
+
+
+@pytest.mark.parametrize(("text", "group"), [
+    # Phrases that matched ordinary sentences.
+    ("I'm in a meeting all day, will read this later.", "review"),
+    ("We're in the middle of a migration, so timing is bad.", "review"),
+    ("My calendar is completely full until March.", "review"),
+    ("Ok.", "review"),  # often only "noted"
+    ("Learn more at acme.io | Privacy policy", "review"),
+    # A yes phrase after a negation is not a yes.
+    ("Don't send me more info, we are not buying.", "notInterested"),
+    ("We can't schedule a call this quarter.", "review"),
+    ("Not great timing for us.", "review"),
+    # A no phrase that is often not a no.
+    ("We already use Jenkins and it's painful, how would you help us migrate?", "questions"),
+    ("I already have your deck, let's talk Tuesday.", "positive"),
+    ("No need to apologize! Happy to hear more.", "positive"),
+    ("Please don't worry about the delay, send me the pricing.", "positive"),
+    ("I've never been more interested in a tool like this.", "positive"),
+    ("Not at this conference, sorry, but let's connect online.", "positive"),
+    # A soft no about this week is not a no.
+    ("Unfortunately I'm traveling this week, can we talk next week?", "positive"),
+    ("Too busy this week. Next week?", "review"),
+    # Annoyed questions are not a buyer's questions.
+    ("Who is this? How did you get my email?", "notInterested"),
+    ("Hello, who is this?", "questions"),  # may be honest curiosity: answer it
+    # Someone else should get the next email.
+    ("You should talk to my colleague Priya, she owns CI.", "review"),
+    # Asks to stop.
+    ("No more emails please.", "unsubscribe"),
+    ("Please remove this address from your mailing list.", "unsubscribe"),
+    ("Please don't email again.", "unsubscribe"),
+])
+def test_wording_that_was_misread(text, group):
+    assert _group(text, None) == group
+
+
+@pytest.mark.parametrize(("text", "group"), [
+    # Wants to meet.
+    ("Does Thursday work for a quick chat?", "positive"),
+    ("How about Tuesday afternoon?", "positive"),
+    ("I'm free on Friday, send an invite.", "positive"),
+    ("We're available next week.", "positive"),
+    ("Happy to jump on a Zoom.", "positive"),
+    ("Here's my calendly: calendly.com/jo/30min", "positive"),
+    ("I'm in!", "positive"),
+    ("I can't wait to see the demo.", "positive"),
+    ("Why not schedule a call next week?", "positive"),
+    # Wants information.
+    ("Can you send over some case studies?", "positive"),
+    ("What are your rates?", "questions"),
+    ("How much would this cost for a team of 10", "questions"),
+    # Interested, but later.
+    ("Reach out to us again in Q1.", "review"),
+    ("Let's circle back after the holidays.", "review"),
+    ("Maybe next quarter.", "review"),
+    ("Ping me in a couple of months.", "review"),
+    # Referral.
+    ("I'm not the right person, cc'ing our CTO.", "review"),
+    ("Looping in Raj who runs our platform team.", "review"),
+    # Polite no.
+    ("We'll pass, thanks.", "notInterested"),
+    ("Not for us.", "notInterested"),
+    ("We've decided to go with another vendor.", "notInterested"),
+    ("Our budget is frozen and there's a hiring freeze.", "notInterested"),
+    ("We already work with another agency.", "notInterested"),
+    ("Unfortunately the timing is wrong for us.", "notInterested"),  # two soft nos
+    ("We're all set, no need for this.", "notInterested"),
+    # Asks to stop.
+    ("Stop spamming me.", "unsubscribe"),
+    ("Take me off your list.", "unsubscribe"),
+    ("Under GDPR, please delete my data.", "unsubscribe"),
+    ("Leave us alone.", "unsubscribe"),
+    ("Please do not reach out again.", "unsubscribe"),
+    ("Don't reach out to me again.", "unsubscribe"),
+    # Someone else's list: a no, not a request to stop.
+    ("We had to remove you from the list of vendors we're considering.", "review"),
+    # Unchanged: one soft no still isn't a yes or a no.
+    ("Not now.", "review"),
+])
+def test_keyword_families(text, group):
+    assert _group(text, None) == group
+
+
+def test_a_negated_yes_is_shown_as_a_soft_no():
+    hits = score_reply("We can't schedule a call this quarter.")["hits"]
+    assert hits == [{"phrase": "can't … schedule a call", "weight": -0.2}]
+
+
+def test_a_soft_no_alone_says_why_it_needs_review():
+    assert data._judge(None, False, "Not right now.")[1] == "Score 0.30: only a soft no (it may mean later)"
+    assert data._judge(None, False, "Ping me in a couple of months.")[1] == "Asks to be contacted later"
+    assert data._judge(None, False, "Looping in Raj.")[1] == "Points you to someone else: write to them"
+
+
+# ---------- Label vs keywords (app/label_report.py) ----------
+
+
+def test_label_report_lists_where_keywords_and_people_disagree(capsys):
+    from app import label_report
+
+    def row(id_, label, body):
+        return {"id": id_, "from_email": f"{id_}@lead.test", "body": body, "sent_body": None, "label": label}
+
+    report = label_report.disagreements([
+        row("a", "interested", "Yes, let's talk."),  # agree
+        row("b", "interested", "Unfortunately the timing is wrong, but call me on the 28th."),  # closed by keywords
+        row("c", "unsubscribe", "Kindly stop."),  # not seen by keywords
+        row("d", "not_interested", "Sounds interesting."),  # keywords: review
+        row("e", "ooo", "Away."),  # not on Positive Leads: skipped
+    ])
+    assert (report["total"], report["agree"]) == (4, 1)
+    assert [i["id"] for i in report["missed"]] == ["b", "c"]
+    assert [(i["id"], i["labelled"], i["keywords"]) for i in report["other"]] == [("d", "notInterested", "review")]
+    label_report._print(report, None)
+    out = capsys.readouterr().out
+    assert "4 labelled replies: the keywords agree on 1 (25%), 2 missed, 1 other" in out
+    assert "[MISSED] person: positive  keywords: notInterested" in out

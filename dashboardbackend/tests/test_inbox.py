@@ -244,6 +244,17 @@ def test_inbox_routes_before_the_migration(monkeypatch):
 
         fetch = fetchrow = fetchval = execute = _missing
 
+        def acquire(self):  # also a connection, with a transaction
+            return self
+
+        transaction = acquire
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
     async def pg():
         return NoTables()
 

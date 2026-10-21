@@ -16,7 +16,15 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import current_user
-from app.reply_rules import POSITIVE_AT, REVIEW_AT, mentions_unsubscribe, preview, score_reply, strip_quoted
+from app.reply_rules import (
+    POSITIVE_AT,
+    REVIEW_AT,
+    STRONG_NO,
+    mentions_unsubscribe,
+    preview,
+    score_reply,
+    strip_quoted,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -74,8 +82,11 @@ select * from (
                      or exists (select 1 from inbox_replies b where b.email_id = e.id and b.auto_label = 'bounce')
               then 'Failed' else 'Sent' end as delivery_status,
          -- The reply to it: one read from Gmail that surely answers it (reply headers or the same conversation, not
-         -- just the sender's address).
-         (select s.id from inbox_replies s where s.email_id = e.id and s.match_method in ('header', 'thread')
+         -- just the sender's address) and was written by a person (not a bounce notice or an out-of-office).
+         (select s.id from inbox_replies s
+          left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
+          where s.email_id = e.id and s.match_method in ('header', 'thread')
+            and coalesce(hl.label, s.auto_label, '') not in ('ooo', 'bounce')
           order by s.received_at limit 1) as reply_id
   from emails e join contacts c on c.id = e.contact_id
   left join companies co on co.id = c.company_id
@@ -226,16 +237,18 @@ async def lead_stats() -> dict:
     }
 
 
-# Every reply written by a person (out-of-office and bounces are automatic, so skipped), with a person's label if one
-# was given. Positive Leads lists each of them on its own: a lead's new email adds a row, its older ones stay.
-_HUMAN_REPLIES = """
+# Every reply of a lead, with a person's label if one was given (else the automatic out-of-office / bounce one).
+_LEAD_REPLIES = """
 select s.contact_id, s.id, s.email_id, s.received_at, coalesce(hl.label, s.auto_label) as label,
        s.body, e.body as sent_body, s.we_replied_at, hl.labelled_by, hl.labelled_at
 from inbox_replies s
 left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
 left join emails e on e.id = s.email_id
-where s.contact_id is not null and coalesce(hl.label, s.auto_label, '') not in ('ooo', 'bounce')
+where s.contact_id is not null
 """
+# The ones written by a person (out-of-office and bounces are automatic, so skipped). Positive Leads lists each of them
+# on its own: a lead's new email adds a row, its older ones stay.
+_HUMAN_REPLIES = f"select * from ({_LEAD_REPLIES}) r where coalesce(label, '') not in ('ooo', 'bounce')"  # noqa: S608
 # Each lead's latest one (the lead drawer opened from the Dashboard shows it).
 _LATEST_HUMAN_REPLY = f"select distinct on (contact_id) * from ({_HUMAN_REPLIES}) h order by contact_id, received_at desc"  # noqa: S608
 
@@ -243,8 +256,13 @@ _LATEST_HUMAN_REPLY = f"select distinct on (contact_id) * from ({_HUMAN_REPLIES}
 def _judge(label: str | None, labelled: bool, text: str) -> tuple[str | None, str | None, dict]:
     """Where a reply goes on Positive Leads -> (group, why it needs review, its keyword score). text is
     what the person wrote (quoted mail removed). group is positive / review / questions / notInterested / unsubscribe,
-    or None (not listed). A person's label is trusted as given; the score is still returned, to compare with it."""
+    or None (not listed). A person's label is trusted as given; the score is still returned, to compare with it.
+    Lopsided on purpose: only a clear no (a strong no, or soft nos scoring below REVIEW_AT) closes a reply as
+    notInterested; a reply with only a soft no goes to a person (review). Asking to be contacted later, pointing to
+    someone else or asking a question keeps a reply open (review / questions) unless it has a strong no."""
     scored = score_reply(text)
+    if label in ("ooo", "bounce"):  # automatic, not a person's answer: not listed
+        return None, None, scored
     if label == "unsubscribe":
         return "unsubscribe", None, scored
     if labelled:
@@ -255,14 +273,21 @@ def _judge(label: str | None, labelled: bool, text: str) -> tuple[str | None, st
         return "unsubscribe", "It seems to ask not to be contacted again", scored
     score, hits = scored["score"], scored["hits"]
     yes, no = any(h["weight"] > 0 for h in hits), any(h["weight"] < 0 for h in hits)
+    clear_no = any(h["weight"] <= STRONG_NO for h in hits)
     if yes and no:
         return "review", f"Score {score:.2f}: says both yes and no", scored
     if score >= POSITIVE_AT:
         return "positive", None, scored
-    if scored["question"] and not no:
+    if scored["referral"] and not clear_no:
+        return "review", "Points you to someone else: write to them", scored
+    if scored["later"] and not clear_no:
+        return "review", "Asks to be contacted later", scored
+    if scored["question"] and not clear_no:  # a soft no with a question ("Too busy now. Next month?") still asks
         return "questions", None, scored
     if score < REVIEW_AT:
         return "notInterested", None, scored
+    if no:
+        return "review", f"Score {score:.2f}: only a soft no (it may mean later)", scored
     return "review", f"Score {score:.2f}: no clear yes or no" if hits else "No keywords matched", scored
 
 
@@ -313,11 +338,13 @@ async def positive_leads() -> dict:
 
 @router.get("/leads/by-reply/{reply_id}")
 async def lead_by_reply(reply_id: str) -> dict:
-    """A lead with one particular reply of theirs (Positive Leads lists each reply on its own)."""
+    """A lead with one particular reply of theirs (Positive Leads lists each reply on its own). Out-of-office and bounce
+    replies too: a reply a person has just labelled one of those stays open in the drawer, so the label can be taken
+    back."""
     try:
         reply = await (await _pg()).fetchrow(
             "select contact_id, id, email_id, label, received_at, body, sent_body, labelled_by, labelled_at "  # noqa: S608
-            f"from ({_HUMAN_REPLIES}) r where id = $1::uuid",
+            f"from ({_LEAD_REPLIES}) r where id = $1::uuid",
             reply_id,
         )
     except asyncpg.DataError as exc:
@@ -365,6 +392,13 @@ async def _lead_detail(lead_id: str, reply: asyncpg.Record | None) -> dict:
         if reply else (None, None, None)
     )
     row["replyGroup"] = group
+    # An unsubscribe: is the lead on the mail agent's do-not-email list yet? None: unknown (migration 012 not run).
+    row["doNotEmail"] = None
+    if group == "unsubscribe" and row.get("email"):
+        try:
+            row["doNotEmail"] = await _value("select dashboard_is_suppressed($1)", row["email"])
+        except asyncpg.UndefinedFunctionError:
+            log.warning("migrations/012_unsubscribe_suppression.sql has not been run")
     row["score"] = scored["score"] if scored else None
     row["scoreHits"] = scored["hits"] if scored else []
     row["labelledBy"] = (

@@ -82,7 +82,8 @@ export async function getPositiveLeads() {
 // -> { checked, newReplies, processed, remaining, rechecked, followUpsChecked, since, repliesWithoutLead }. 503 with a readable detail when Gmail is not set
 // up or connected, or migration 007 has not been run.
 export const checkInbox = () => apiFetch('/inbox/check', { method: 'POST' });
-// A person's label for a reply read from Gmail (label null removes it) -> { ok }. The mail agent does not see it.
+// A person's label for a reply read from Gmail (label null removes it) -> { ok }. Unsubscribe also puts the lead on the
+// mail agent's do-not-email list (backend migration 012); the agent sees no other label.
 export const labelReply = ({ replyId, label }) => apiFetch('/inbox/label', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replyId, label }),
 });
