@@ -103,8 +103,8 @@ select *, row_number() over (order by received_at, id) as number from (
 """
 
 _BLOGS = """
-select * from (
-  select p.id, row_number() over (order by p.created_at, p.id) as number, p.title,
+select s.*, row_number() over (order by s.added_at, s.id) as number from (
+  select p.id, p.created_at as added_at, p.title,
          case when p.status = 'published' then 'Posted' else 'Not Posted' end as status,
          case when p.devto_url is not null then 'Dev.to'
               when p.cms_url is not null then 'WordPress'
@@ -112,6 +112,13 @@ select * from (
          coalesce(p.cms_url, p.devto_url, p.linkedin_url) as url,
          p.published_at as posted_at, p.body_md as content
   from content_posts p
+  -- The ones this backend posts (app/blog_posts.py, migrations/011_blog_posts.sql); the Marketing Agent posted the
+  -- ones above. A Dev.to draft, a failed or an unfinished post is Not Posted.
+  union all
+  select b.id, b.started_at, b.title,
+         case when b.status = 'posted' and not b.draft then 'Posted' else 'Not Posted' end,
+         'Dev.to', b.url, b.posted_at, b.body_md
+  from blog_posts b
 ) s
 """
 
