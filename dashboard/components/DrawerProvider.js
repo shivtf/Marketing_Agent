@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { Skeleton, ErrorBox } from './ui';
 import { FormattedContent } from './FormattedContent';
-import { Markdown } from './Markdown';
+import { Markdown } from './LazyMarkdown';
 import { toSection, useLeadsFilter, useList, useSection } from './DataProvider';
 import { getKinds } from './drawerKinds';
 import { neighbours } from '@/core/listStep';
