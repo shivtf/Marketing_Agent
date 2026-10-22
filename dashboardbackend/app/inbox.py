@@ -132,6 +132,7 @@ async def _check() -> dict:
             """select count(*) from inbox_replies s
                 where s.auto_label is null and not exists (select 1 from contacts c where c.id = s.contact_id)"""
         )
+    await data.refresh_leads()  # new replies and bounces change lead statuses
     return {"checked": len(ids), "newReplies": new_replies + found, "processed": processed,
             "remaining": len(fresh), "rechecked": rechecked, "followUpsChecked": follow_ups,
             "since": start.isoformat(), "repliesWithoutLead": without_lead or 0}
@@ -372,4 +373,5 @@ async def label(body: LabelIn, user: User) -> dict:
     except asyncpg.PostgresError as exc:
         log.error("Could not save the label", exc_info=True)
         raise HTTPException(503, "Couldn't save the label: the database refused it. Try again.") from exc
+    await data.refresh_leads()  # a label can move a lead to or from Responded
     return {"ok": True}
