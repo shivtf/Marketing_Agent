@@ -37,7 +37,7 @@ from typing import Annotated, Literal
 
 import asyncpg
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from app import data, gmail, reply_rules
@@ -132,6 +132,7 @@ async def _check() -> dict:
             """select count(*) from inbox_replies s
                 where s.auto_label is null and not exists (select 1 from contacts c where c.id = s.contact_id)"""
         )
+    await data.rescore_stale()  # so Positive Leads reads saved scores instead of scoring on a page load
     await data.refresh_leads()  # new replies and bounces change lead statuses
     return {"checked": len(ids), "newReplies": new_replies + found, "processed": processed,
             "remaining": len(fresh), "rechecked": rechecked, "followUpsChecked": follow_ups,
@@ -340,7 +341,7 @@ async def _refresh_follow_ups(pool: asyncpg.Pool, http: httpx.AsyncClient, token
 
 
 @router.post("/label")
-async def label(body: LabelIn, user: User) -> dict:
+async def label(body: LabelIn, user: User, background: BackgroundTasks) -> dict:
     """Shown instead of any automatic label from now on. Labelling a reply unsubscribe also puts its addresses (the
     sender and the lead) on the mail agent's do-not-email list, and taking that label back lifts what was added
     (migration 012: the backend can only do this through its functions). Nothing is sent. reply_labels.source is always
@@ -373,5 +374,8 @@ async def label(body: LabelIn, user: User) -> dict:
     except asyncpg.PostgresError as exc:
         log.error("Could not save the label", exc_info=True)
         raise HTTPException(503, "Couldn't save the label: the database refused it. Try again.") from exc
-    await data.refresh_leads()  # a label can move a lead to or from Responded
+    # A label can move a lead to or from Responded. The view is rebuilt after the answer is sent (the save is done), so
+    # the person is not kept waiting; the cache is cleared now and again when the rebuild finishes.
+    data.clear_cache()
+    background.add_task(data.refresh_leads)
     return {"ok": True}

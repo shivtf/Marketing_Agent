@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -13,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.accounts import router as accounts_router
 from app.auth import current_user, release
 from app.blog_posts import router as blog_posts_router
+from app.data import _pg
 from app.data import router as data_router
 from app.inbox import check_every, check_interval
 from app.inbox import router as inbox_router
@@ -20,10 +22,17 @@ from app.needs_contact import router as needs_contact_router
 
 load_dotenv()  # reads dashboardbackend/.env when started from that folder
 
+log = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Starts the scheduled inbox check (app/inbox.py) when INBOX_CHECK_EVERY_MINUTES is set."""
+    """Opens the database pool, so the first request does not pay for the connection (TCP + TLS), and starts the
+    scheduled inbox check (app/inbox.py) when INBOX_CHECK_EVERY_MINUTES is set."""
+    try:
+        await _pg()
+    except Exception:  # noqa: BLE001 - e.g. DATABASE_URL not set: the routes report that themselves
+        log.warning("Could not open the database pool at startup", exc_info=True)
     minutes = check_interval()
     task = asyncio.create_task(check_every(minutes)) if minutes else None
     yield
