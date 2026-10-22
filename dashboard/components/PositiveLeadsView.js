@@ -1,88 +1,67 @@
 'use client';
-// Page 4: Positive Leads. Every reply written by a person is its own row, judged on its own words (backend
-// /leads/positive): a lead's new email adds a row, and their older ones stay where they are.
-//   Positive      -> labelled interested, or a keyword score of 0.70 or more
-//   Needs review  -> a score between 0.30 and 0.70, both a yes and a no, asks to be contacted later, or points to
-//                    someone else
-//   Questions     -> asked something (scope, pricing, process) before deciding
-//   Not interested -> a clear no (labelled, or a score below 0.30): listed so a misread "yes" can still be spotted
-//   Unsubscribe   -> asked to stop (or seems to): a person's Unsubscribe label puts them on the agent's do-not-email list
+// Page 4: Positive Leads. One row per person who replied, in the tab that says what to do next (core/positiveTabs.js):
+//   Reply to these -> interested or asked something, and we haven't answered their latest email yet
+//   Check these    -> the keywords weren't sure, or the reply may ask to stop: a person chooses a label
+//   Answered       -> we replied to their latest email
+//   Closed         -> said no, or asked to stop (labelled Unsubscribe, which puts them on the agent's do-not-email list)
+// The backend judges every reply on its own (/leads/positive: a person's label, else the keyword score of
+// app/reply_rules.py); a person's newest reply decides their tab, and their earlier replies are listed in the drawer.
 // The mail agent only sends: the backend reads every reply from Gmail (Check inbox; it also runs when the page opens, at
-// most every AUTO_CHECK_MINUTES) and scores it by keywords (app/reply_rules.py). A person's label in the drawer always
-// wins over the score.
-// Within each group, leads still waiting for our answer come first, longest-waiting on top.
-// The selected group lives in the URL (?group=review) so reloads, Back and shared links keep it.
-// Search (name, company, reply text) and sort apply to the selected group and to the drawer's Previous/Next.
-import { useCallback, useEffect, useRef, useState } from 'react';
+// most every AUTO_CHECK_MINUTES).
+// The selected tab lives in the URL (?tab=check) so reloads, Back and shared links keep it.
+// Search (name, company, reply text) and sort apply to the selected tab and to the drawer's Previous/Next.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { OpenRow } from './OpenRow';
 import { useLeadsFilter, useSection, visiblePositive } from './DataProvider';
-import { Badge, CardHead, SourceCell, ViewCell, DataTable, StatCards } from './ui';
+import { Badge, DataTable, StatCards } from './ui';
 import { Icon } from './Icon';
 import { checkInbox } from '@/core/api';
-import { pad, fmtDate, toneOf, daysSince, REPLY_LABELS, scoreTone, scoreHitsText } from '@/core/format';
+import { fmtDate, daysSince } from '@/core/format';
+import { byPerson, OVERDUE_DAYS, TABS, whyOf } from '@/core/positiveTabs';
 
-const OVERDUE_DAYS = 3; // unanswered for this long -> shown in red
 const AUTO_CHECK_MINUTES = 5; // opening the page reads Gmail again only after this long
 let lastAutoCheck = 0; // per browser tab, so moving between pages doesn't read Gmail every time
+let lastCheck = null; // { at, result }: the last Gmail check in this browser tab, shown when the page opens again
 
-const GROUPS = [
-  { key: 'positive', label: 'Positive', kind: 'positiveLead', icon: 'check', empty: 'No positive leads yet',
-    hint: 'Replied with interest: labelled interested, or their reply scored 0.70 or more (they want a call, details or to move forward).' },
-  { key: 'review', label: 'Needs review', kind: 'reviewLead', icon: 'alert', empty: 'Nothing to review',
-    hint: 'The keywords gave no clear answer: a score between 0.30 and 0.70, both a yes and a no, a request to be contacted later, or a pointer to someone else. Open each one and choose a label; they are not counted as positive.' },
-  { key: 'questions', label: 'Questions', kind: 'questionLead', icon: 'chat', empty: 'No open questions',
-    hint: 'Asked about scope, pricing or process before deciding. Answer these quickly; they are not counted as positive.' },
-  { key: 'notInterested', label: 'Not interested', kind: 'notInterestedLead', icon: 'close', empty: 'No one has said no',
-    hint: 'Said a clear no (labelled, or a score below 0.30), so no answer is needed. Skim these in case a reply was misread.' },
-  { key: 'unsubscribe', label: 'Unsubscribe', kind: 'unsubscribeLead', icon: 'close', empty: 'Nobody has asked to stop',
-    hint: 'Asked to stop, or seems to. Open each one and label it Unsubscribe: that puts them on the mail agent’s do-not-email list, so it stops emailing them.' },
-];
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-function PositiveStatCards({ section }) {
+function PositiveStatCards({ section, tabs }) {
   const { status, data, reload } = section;
-  // The big numbers count leads (so the rate can't pass 100%); the line under them counts emails, which is what the
-  // group tabs count. A lead is positive when they sent a positive email and have not said no since: a later question
-  // or unclear email keeps them positive, a later "not interested" or "unsubscribe" does not.
+  // Every number counts people. A lead is interested when they sent a positive email and have not said no since: a
+  // later question or unclear email keeps them interested, a later "not interested" or "unsubscribe" does not.
   const lastYes = new Map(); // lead -> when they last wrote a positive email
   const lastNo = new Map(); // lead -> when they last said no or asked to stop
   for (const [key, seen] of [['positive', lastYes], ['notInterested', lastNo], ['unsubscribe', lastNo]]) {
     for (const l of data[key]) if (!(seen.get(l.leadId) >= l.repliedAt)) seen.set(l.leadId, l.repliedAt);
   }
-  const positive = [...lastYes].filter(([lead, at]) => !(lastNo.get(lead) > at)).length;
-  const rate = data.repliedLeads ? `${((positive / data.repliedLeads) * 100).toFixed(1)}%` : '—';
-  const emails = GROUPS.reduce((n, g) => n + data[g.key].length, 0);
-  const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const interested = [...lastYes].filter(([lead, at]) => !(lastNo.get(lead) > at)).length;
+  const rate = data.repliedLeads ? `${Math.round((interested / data.repliedLeads) * 100)}%` : '—';
+  const overdue = tabs.reply.filter((l) => daysSince(l.repliedAt) >= OVERDUE_DAYS).length;
   return (
     <StatCards
       items={[
-        // Leads with a positive email and no "no" since.
-        { label: 'Positive Leads', icon: 'check', tone: 'green', value: positive,
-          sub: count(data.positive.length, 'positive email'), status, onRetry: reload },
-        // Same count as the Dashboard's Responses: every lead that replied in person, labelled or not.
-        { label: 'Leads Replied', icon: 'chat', value: data.repliedLeads, sub: count(emails, 'email'), status,
-          onRetry: reload },
-        { label: 'Positive Rate', icon: 'bolt', tone: 'lavender', value: rate, sub: 'of the leads who replied', status,
+        { label: 'To reply', icon: 'mail', tone: overdue ? 'red' : 'amber', value: tabs.reply.length,
+          sub: overdue ? `${overdue} waiting ${OVERDUE_DAYS}+ days` : 'Nobody waiting long', status, onRetry: reload },
+        // repliedLeads: the same count as the Dashboard's Responses (every lead that replied in person).
+        { label: 'Interested', icon: 'check', tone: 'green', value: interested,
+          sub: `of ${plural(data.repliedLeads, 'lead')} who replied`, status, onRetry: reload },
+        { label: 'Positive rate', icon: 'bolt', tone: 'lavender', value: rate, sub: 'of leads who replied', status,
           onRetry: reload },
       ]}
     />
   );
 }
 
-function GroupChips({ data, ready, group, onSelect }) {
+function TabChips({ tabs, ready, tab, onSelect }) {
   return (
-    <div className="chip-group" role="tablist" aria-label="Lead groups">
-      {GROUPS.map((g) => {
-        const on = g.key === group.key;
+    <div className="chip-group" role="tablist" aria-label="What to do">
+      {TABS.map((t) => {
+        const on = t.key === tab.key;
         return (
-          <button
-            key={g.key}
-            className={`chip${on ? ' active' : ''}`}
-            role="tab"
-            aria-selected={on}
-            onClick={() => onSelect(g)}
-          >
-            {g.label}{ready && ` (${data[g.key].length})`}
+          <button key={t.key} className={`chip${on ? ' active' : ''}`} role="tab" aria-selected={on}
+            onClick={() => onSelect(t)}>
+            {t.label}{ready && <span className="chip-count">{tabs[t.key].length}</span>}
           </button>
         );
       })}
@@ -90,43 +69,32 @@ function GroupChips({ data, ready, group, onSelect }) {
   );
 }
 
-// Whether we have answered this reply, and for how long they've been waiting if not.
-function FollowUp({ lead }) {
-  if (lead.followUp === 'replied') {
-    return (
-      <>
-        <Badge text="We replied" tone="green" />
-        <div className="muted small">{fmtDate(lead.answeredAt, 'date')}</div>
-      </>
-    );
-  }
-  if (lead.followUp === 'none') return <Badge text="No answer needed" tone="gray" />;
-  // An older email: the lead wrote again since, and that newer email is the one waiting for us.
-  if (lead.followUp === 'later') {
-    return <Badge text="Wrote again" tone="gray" title="They wrote again later: their newer email is the one waiting for an answer." />;
-  }
-  const days = daysSince(lead.repliedAt);
-  const text = days === 0 ? 'Waiting · today' : `Waiting ${days} day${days === 1 ? '' : 's'}`;
-  return <Badge text={text} tone={days >= OVERDUE_DAYS ? 'red' : 'amber'} />;
-}
-
-// Why the lead is in this group: a person's label, or the keyword score and what it matched.
-function WhyHere({ lead }) {
-  if (lead.labelledByPerson) {
-    const text = REPLY_LABELS[lead.label];
-    return <><Badge text={text} tone={toneOf(text)} /><div className="muted small">Labelled by a person</div></>;
-  }
-  const note = lead.reviewReason || (lead.scoreHits?.length ? scoreHitsText(lead.scoreHits) : 'No keywords matched');
+// Why they are in this tab, in plain words; the score and matched phrases are in the tooltip and the drawer.
+function Why({ lead }) {
+  const why = whyOf(lead);
   return (
     <>
-      <Badge text={`Score ${lead.score.toFixed(2)}`} tone={scoreTone(lead.score)} />
-      <div className="muted small ellip" title={note}>{note}</div>
+      <Badge text={why.text} tone={why.tone} title={why.title} />
+      {lead.labelledByPerson && <div className="muted small">Labelled by a person</div>}
     </>
   );
 }
 
+// How long they have waited for our answer, or what happened instead.
+function Waiting({ lead, tab }) {
+  if (tab === 'answered') {
+    return <><Badge text="Answered" tone="green" /><div className="muted small">{fmtDate(lead.answeredAt, 'date')}</div></>;
+  }
+  if (tab === 'closed') return <span className="muted small">No answer needed</span>;
+  const days = daysSince(lead.repliedAt);
+  return (
+    <Badge text={days === 0 ? 'today' : plural(days, 'day')} tone={days >= OVERDUE_DAYS ? 'red' : 'amber'}
+      title={`Replied ${fmtDate(lead.repliedAt, 'table')}`} />
+  );
+}
+
 const SORT_OPTIONS = [
-  { value: 'followup', label: 'Follow-up first' },
+  { value: 'followup', label: 'Most urgent first' },
   { value: 'newest', label: 'Newest reply' },
   { value: 'oldest', label: 'Oldest reply' },
   { value: 'name', label: 'Name A–Z' },
@@ -155,9 +123,7 @@ function SearchAndSort({ view, setView }) {
   );
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
-// What the last Gmail check found, so an empty page explains itself.
+// What the last Gmail check found (shown as the "Last checked" tooltip).
 function checkText(r) {
   if (!r.since) return 'No outreach email has been sent yet, so there are no replies to look for.';
   const found = r.newReplies ? `${r.newReplies} new repl${r.newReplies === 1 ? 'y' : 'ies'} from leads` : 'no new replies from leads';
@@ -168,19 +134,25 @@ function checkText(r) {
   return `Checked ${plural(r.checked, 'email')} in Gmail since ${fmtDate(r.since, 'date')}: ${found}.${more}${gone}`;
 }
 
+const ago = (at) => {
+  const min = Math.floor((Date.now() - at) / 60_000);
+  return min < 1 ? 'just now' : min < 60 ? `${min} min ago` : fmtDate(new Date(at).toISOString(), 'table');
+};
+
 // Reads new replies from Gmail, on click and when the page opens. onDone reloads the lists.
 function useInboxCheck(onDone) {
-  const [state, setState] = useState({ busy: false, result: null, error: null });
+  const [state, setState] = useState({ busy: false, last: lastCheck, error: null });
   const done = useRef(onDone);
   done.current = onDone;
   const run = useCallback(async () => {
     setState((s) => ({ ...s, busy: true, error: null }));
     try {
       const result = await checkInbox();
-      setState({ busy: false, result, error: null });
+      lastCheck = { at: Date.now(), result };
+      setState({ busy: false, last: lastCheck, error: null });
       if (result.newReplies || result.followUpsChecked) done.current();
     } catch (err) {
-      setState({ busy: false, result: null, error: err.message });
+      setState((s) => ({ ...s, busy: false, error: err.message }));
     }
   }, []);
   useEffect(() => {
@@ -188,13 +160,33 @@ function useInboxCheck(onDone) {
     lastAutoCheck = Date.now();
     run();
   }, [run]);
+  // "2 min ago" moves on by itself.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
   return { ...state, run };
 }
 
+function InboxCheck({ check }) {
+  const { busy, last, run } = check;
+  return (
+    <div className="inbox-status">
+      {last && <span className="muted small" title={checkText(last.result)}>Last checked {ago(last.at)}</span>}
+      <button className="btn small-btn" type="button" onClick={run} disabled={busy}>
+        <Icon name="mail" /> {busy ? 'Checking Gmail…' : 'Check inbox'}
+      </button>
+    </div>
+  );
+}
+
+// Only what needs saying: a failed check, or mail left for the next check.
 function InboxNote({ check }) {
   if (check.error) return <div className="info-note warn" role="status">Could not read Gmail: {check.error}</div>;
-  if (!check.result) return null;
-  return <div className="info-note" role="status">{checkText(check.result)}</div>;
+  const r = check.last?.result;
+  if (r && (!r.since || r.remaining)) return <div className="info-note" role="status">{checkText(r)}</div>;
+  return null;
 }
 
 export default function PositiveLeadsView() {
@@ -205,59 +197,67 @@ export default function PositiveLeadsView() {
   const { status, data, reload } = section;
   const { positiveView, setPositiveView } = useLeadsFilter();
   const check = useInboxCheck(reload);
+  const tabs = useMemo(() => byPerson(data), [data]);
 
-  const group = GROUPS.find((g) => g.key === params.get('group')) || GROUPS[0];
-  const select = (g) => {
-    const query = g.key === GROUPS[0].key ? '' : `?group=${g.key}`;
+  const tab = TABS.find((t) => t.key === params.get('tab')) || TABS[0];
+  // The drawer's Previous/Next steps through the same tab.
+  useEffect(() => {
+    if (positiveView.tab !== tab.key) setPositiveView((v) => ({ ...v, tab: tab.key }));
+  }, [tab.key, positiveView.tab, setPositiveView]);
+  const select = (t) => {
+    const query = t.key === TABS[0].key ? '' : `?tab=${t.key}`;
     router.replace(`${pathname}${query}`, { scroll: false });
   };
-  const all = data[group.key];
+  const all = tabs[tab.key];
   const list = visiblePositive(all, positiveView);
   const searching = positiveView.q.trim() !== '';
 
   return (
     <main className="page">
-      <div className="page-head">
-        <h1 className="page-title">Positive Leads</h1>
-        <p className="muted">Leads who replied with interest, ready for follow-up.</p>
+      <div className="page-head page-head-row">
+        <div>
+          <h1 className="page-title">Positive Leads</h1>
+          <p className="muted">Who to answer and what to check.</p>
+        </div>
+        <InboxCheck check={check} />
       </div>
-      <PositiveStatCards section={section} />
+      <PositiveStatCards section={section} tabs={tabs} />
       <div className="card">
-        <CardHead icon={group.icon} title="Leads to Follow Up">
-          <button className="btn small-btn inbox-check" type="button" onClick={check.run} disabled={check.busy}>
-            <Icon name="mail" /> {check.busy ? 'Checking Gmail…' : 'Check inbox'}
-          </button>
-        </CardHead>
         <div className="filters">
-          <GroupChips data={data} ready={status === 'ready'} group={group} onSelect={select} />
+          <TabChips tabs={tabs} ready={status === 'ready'} tab={tab} onSelect={select} />
           <div className="filters-gap" />
           <SearchAndSort view={positiveView} setView={setPositiveView} />
         </div>
-        <p className="muted small group-hint">{group.hint}</p>
+        <p className="muted small group-hint">{tab.hint}</p>
         <InboxNote check={check} />
         <DataTable
           status={status}
-          emptyIcon={group.icon}
-          emptyText={searching && all.length ? 'No leads match your search' : group.empty}
+          emptyIcon={tab.icon}
+          emptyText={searching && all.length ? 'No leads match your search' : tab.empty}
           what="positive leads"
           onRetry={reload}
           head={(
             <>
-              <th>#</th><th>Name</th><th>Source</th><th>Replied On</th><th>Follow-up</th>
-              <th>Why Here</th>
-              <th>Reply Preview</th><th className="view">View</th>
+              <th>Lead</th><th>Their reply</th><th>Why</th>
+              <th>{tab.key === 'answered' || tab.key === 'closed' ? 'Status' : 'Waiting'}</th>
+              <th className="view" aria-label="Open" />
             </>
           )}
           rows={list.map((l) => (
-            <OpenRow key={l.id} kind={group.kind} id={l.id}>
-              <td className="num">{pad(l.number)}</td>
-              <td><div className="name">{l.name}</div><div className="muted small">{l.company}</div></td>
-              <td><SourceCell source={l.source} /></td>
-              <td className="muted when">{fmtDate(l.repliedAt, 'table')}</td>
-              <td><FollowUp lead={l} /></td>
-              <td><WhyHere lead={l} /></td>
-              <td><div className="ellip preview">{l.preview || <span className="muted">—</span>}</div></td>
-              <ViewCell />
+            <OpenRow key={l.id} kind="personLead" id={l.id}>
+              <td className="lead-cell">
+                <div className="name">{l.name}</div>
+                <div className="muted small">{l.company}</div>
+                {l.earlier.length > 0 && (
+                  <div className="muted small">+{l.earlier.length} earlier repl{l.earlier.length === 1 ? 'y' : 'ies'}</div>
+                )}
+              </td>
+              <td className="reply-cell">
+                {l.preview ? <div className="reply-preview">“{l.preview}”</div> : <span className="muted">—</span>}
+              </td>
+              <td><Why lead={l} /></td>
+              <td><Waiting lead={l} tab={tab.key} /></td>
+              <td className="view"><Icon name="chevR" /></td>
             </OpenRow>
           ))}
         />

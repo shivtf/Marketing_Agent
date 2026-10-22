@@ -9,8 +9,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { Badge, StatusBadge, SourceCell, ExtLink, MetaRow } from './ui';
 import { pad, fmtDate, toneOf, REPLY_LABELS, replyLabel, scoreTone, scoreHitsText } from '@/core/format';
-import { visiblePositive } from './DataProvider';
+import { useSection, visiblePositive } from './DataProvider';
 import * as api from '@/core/api';
+import { byPerson, repliesOf, whyOf } from '@/core/positiveTabs';
 
 const ActionButton = ({ onClick, icon, children }) => (
   <button className="btn outline block" onClick={onClick}><Icon name={icon} /> {children}</button>
@@ -61,6 +62,32 @@ function LabelReply({ d }) {
   );
 }
 
+// The lead's other replies (Positive Leads lists a person once, on their newest reply): each opens in this drawer, where
+// it can be labelled on its own.
+function OtherReplies({ leadId, replyId, onOpen }) {
+  const { data } = useSection('positive');
+  const others = repliesOf(data, leadId).filter((r) => r.id !== replyId);
+  if (!others.length) return null;
+  return (
+    <MetaRow k="Other Replies" block>
+      <ul className="other-replies">
+        {others.map((r) => {
+          const why = whyOf(r);
+          return (
+            <li key={r.id}>
+              <button type="button" className="other-reply" onClick={() => onOpen(r.id)}>
+                <span className="muted small">{fmtDate(r.repliedAt, 'date')}</span>
+                <Badge text={why.text} tone={why.tone} title={why.title} />
+                <span className="ellip">{r.preview || '—'}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </MetaRow>
+  );
+}
+
 // The lead (company) an email or reply belongs to.
 const LeadRow = ({ d }) => <MetaRow key="lead" k="Lead">{d.company || <span className="muted">Unknown company</span>}</MetaRow>;
 
@@ -103,15 +130,15 @@ export function getKinds(goto) {
     },
   };
 
-  // Same drawer as a lead, opened from a Positive Leads section on one reply (each reply is its own row there, so the
-  // id is the reply's): Previous/Next stays in that section (with the page's search and sort), and that reply, its
-  // label, score and any review reason are shown.
-  const fromPositivePage = (group) => ({
+  // Same drawer as a lead, opened from Positive Leads on one reply (a person's newest reply, or one of their earlier
+  // ones: the id is the reply's): Previous/Next stays in the page's tab (with its search and sort), and that reply, its
+  // label, score and any review reason are shown, with links to the person's other replies.
+  const personLead = {
     ...lead,
     paged: null,
     section: 'positive',
     load: api.getLeadByReply,
-    list: (positive, _filter, view) => visiblePositive(positive[group], view),
+    list: (positive, _filter, view) => visiblePositive(byPerson(positive)[view.tab] || [], view),
     describe: (d) => {
       const v = { ...lead.describe(d), bodyTitle: d.latestReply ? `Their reply · ${fmtDate(d.latestReply.receivedAt)}` : null };
       const text = REPLY_LABELS[d.replyLabel];
@@ -156,16 +183,13 @@ export function getKinds(goto) {
         ...(d.latestReply ? [
           // key: a fresh control for each reply, so stepping to the next lead doesn't carry this one's choice.
           <MetaRow key="labelit" k="Label This Reply"><LabelReply key={d.latestReply.id} d={d} /></MetaRow>,
+          <OtherReplies key="others" leadId={d.id} replyId={d.latestReply.id}
+            onOpen={(id) => goto('positive-leads', 'personLead', id)} />,
         ] : []),
       ];
       return { ...v, rows: [...v.rows.slice(0, 7), ...extra, ...v.rows.slice(7)] };
     },
-  });
-  const positiveLead = fromPositivePage('positive');
-  const reviewLead = fromPositivePage('review');
-  const questionLead = fromPositivePage('questions');
-  const notInterestedLead = fromPositivePage('notInterested');
-  const unsubscribeLead = fromPositivePage('unsubscribe');
+  };
 
   const sent = {
     paged: 'sent',
@@ -261,5 +285,5 @@ export function getKinds(goto) {
     },
   };
 
-  return { lead, positiveLead, reviewLead, questionLead, notInterestedLead, unsubscribeLead, sent, reply, blog };
+  return { lead, personLead, sent, reply, blog };
 }

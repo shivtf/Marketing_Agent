@@ -1,7 +1,7 @@
 'use client';
 // Data for every page, cached by TanStack Query: each section is fetched on first use, shared between pages,
 // and refetched in the background when it goes stale (window refocus, reconnect). Also holds the leads filter,
-// the page each list is on and the Positive Leads search/sort, so they survive tab switches and the drawer can
+// the page each list is on and the Positive Leads tab/search/sort, so they survive tab switches and the drawer can
 // step through exactly what is shown.
 import { createContext, useCallback, useContext, useState } from 'react';
 import {
@@ -41,8 +41,8 @@ const EMPTY = {
   needsContact: { items: [], total: 0 },
 };
 
-// Positive Leads search + sort ({ q, sort }), applied to one group. 'followup' keeps the backend order
-// (waiting for our answer first, longest-waiting on top).
+// Positive Leads search + sort ({ q, sort, tab }), applied to one tab. 'followup' keeps the tab's own order
+// (core/positiveTabs.js: longest waiting first where an answer is due, else newest first).
 const SORTS = {
   newest: (a, b) => b.repliedAt.localeCompare(a.repliedAt),
   oldest: (a, b) => a.repliedAt.localeCompare(b.repliedAt),
@@ -72,7 +72,7 @@ export function DataProvider({ children }) {
   }));
   const [filter, setLeadsFilter] = useState({ status: 'all', source: 'all' });
   const [pages, setPages] = useState({ leads: 1, sent: 1, blogs: 1 });
-  const [positiveView, setPositiveView] = useState({ q: '', sort: 'followup' });
+  const [positiveView, setPositiveView] = useState({ q: '', sort: 'followup', tab: 'reply' });
   const [listFilters, setListFilters] = useState(LIST_FILTERS);
   // A new lead filter starts again from page 1 (the old page may not exist in the filtered list).
   const setFilter = useCallback((fn) => {
