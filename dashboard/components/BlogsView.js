@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { OpenRow } from './OpenRow';
 import { useList } from './DataProvider';
 import { Badge, CardHead, StatusBadge, SiteCell, ViewCell, DataTable, Pager, Skeleton, ErrorBox, EmptyBox, MetaRow, ExtLink } from './ui';
-import { Markdown } from './Markdown';
+import { Markdown } from './LazyMarkdown';
 import { Icon } from './Icon';
 import { useConfirm } from './ConfirmDialog';
 import { getSession, isAdmin } from '@/core/auth';
