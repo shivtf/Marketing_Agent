@@ -27,7 +27,7 @@ language sql stable security definer set search_path = public, extensions, pg_te
     select s.from_email as a from inbox_replies s where s.id = p_reply
     union all
     select c.email from inbox_replies s join contacts c on c.id = s.contact_id where s.id = p_reply
-  ) x
+  ) 
   where nullif(btrim(a), '') is not null
 $$;
 

@@ -607,7 +607,7 @@ function WeeklyFilesCard({ admin, onTrackerChange }) {
         </div>
       )}
       {admin && mode === 'draft' && (
-        <div className="notice small">Test mode: Post today&apos;s blogs sends blogs to Dev.to as unpublished drafts (BLOG_POSTING=draft on the backend).</div>
+        <div className="notice small" title="Blogs are sent to Dev.to as unpublished drafts (BLOG_POSTING=draft on the backend).">Test mode</div>
       )}
       {admin && dueToday > 0 && (
         <div className="row post-today">

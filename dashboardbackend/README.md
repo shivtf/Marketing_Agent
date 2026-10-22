@@ -46,8 +46,12 @@ lead / outreach / content services ──write──▶ Supabase Postgres ◀─
    0.30 → Not interested**. Only a clear no is closed as Not interested: a strong no ("not interested"), or soft nos
    that together score below 0.30. A reply with both a yes and a no, a single soft no ("not now"), or one asking to be
    contacted later or pointing to someone else goes to review, and a question goes to Questions; a strong no still
-   closes those, two soft nos don't ("Too busy right now. Maybe next year?" goes to review). Edit the phrase list there to tune it;
-   every reply is re-scored on the next page load (nothing is stored).
+   closes those, two soft nos don't ("Too busy right now. Maybe next year?" goes to review). Each reply is scored **once** and the result
+   saved with it (`inbox_replies.score_data`, `migrations/013_reply_scores.sql`, run by hand after 007 and before
+   deploying): the inbox check scores a reply when it saves it, and Positive Leads reads the saved score (a reply without
+   one is scored on that load and saved). A person's label is still applied on every load. Edit the phrase list there to
+   tune it, and **bump `RULES_VERSION`** in `app/reply_rules.py` in the same change: every saved score made with older
+   rules is then worked out again, once, on the next page load.
    **Unsubscribe:** when a person labels a reply Unsubscribe in its drawer, the reply's addresses (the sender and the
    lead) go on the mail agent's do-not-email list (`suppression_list`, which the agent checks before every send and
    follow-up), and the drawer then says so. Taking the label back lifts only what the dashboard added, never the

@@ -142,6 +142,11 @@ def message_ids(*values: str | None) -> list[str]:
 # (a strong no, or soft nos scoring below REVIEW_AT, unless it also asks something, asks for later or names someone). Anything less sure goes to Needs review, where a person sees it: a missing keyword
 # then costs a few seconds of review, never a lost lead.
 
+# Bump this whenever a change in this file could change a reply's score, flags or preview (a phrase, a weight, what
+# strip_quoted leaves out): every reply's saved score (inbox_replies.score_data, migrations/013_reply_scores.sql) made
+# with an older version is worked out again, once, on the next Positive Leads load.
+RULES_VERSION = 1
+
 NEUTRAL = 0.5
 POSITIVE_AT = 0.7  # this score or more: Positive
 REVIEW_AT = 0.3  # from here up to POSITIVE_AT: Needs review; below it: Not interested (one soft no alone is 0.3)
@@ -304,3 +309,11 @@ def score_reply(text: str | None) -> dict:
     score = min(1.0, max(0.0, NEUTRAL + sum(h["weight"] for h in hits)))
     return {"score": round(score, 2), "hits": hits, "question": bool(_QUESTION.search(text)),
             "later": bool(_LATER.search(text)), "referral": bool(_REFERRAL.search(text))}
+
+
+def score_saved(body: str | None, ours: str | None = None) -> dict:
+    """What is saved for a reply (inbox_replies.score_data), so Positive Leads never scores it again: score_reply() of
+    what the person wrote (`ours`: the email of ours it answers), plus unsubscribe (it seems to ask to stop) and the
+    preview shown in the list."""
+    text = strip_quoted(body, ours)
+    return {**score_reply(text), "unsubscribe": mentions_unsubscribe(text), "preview": preview(body, ours)}

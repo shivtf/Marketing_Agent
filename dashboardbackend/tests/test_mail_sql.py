@@ -32,6 +32,7 @@ The test leads, one per case, and where each should show (Positive Leads tab / D
 """
 
 import asyncio
+import json
 import pathlib
 import secrets
 import time
@@ -42,7 +43,7 @@ import pytest
 from conftest import throwaway_postgres
 from fastapi.testclient import TestClient
 
-from app import data
+from app import data, reply_rules
 from app.main import app
 
 SECRET = secrets.token_hex(32)  # signs fake test tokens only
@@ -89,6 +90,7 @@ async def _seed(dsn: str) -> None:
     try:
         await conn.execute(SCHEMA)
         await conn.execute((MIGRATIONS / "007_inbox_replies.sql").read_text())
+        await conn.execute((MIGRATIONS / "013_reply_scores.sql").read_text())
         # Companies with no contact: one still in the pipeline (a lead), two that are not.
         await conn.execute("""insert into companies (name, domain, source, lead_status) values
             ('Waiting Co', 'waiting.test', 'leadgen:search', 'NEEDS_CONTACT'),
@@ -171,6 +173,42 @@ def test_every_reply_lands_in_the_right_place(client):
     assert res["repliedLeads"] == 10  # everyone marked Responded in the table
     kate = next(lead for lead in res["positive"] if lead["name"] == "Keyword Kate")
     assert kate["score"] == 1.0 and [h["phrase"] for h in kate["scoreHits"]] == ["send me some times", "sounds great"]
+
+
+def _db(client, sql, *args):
+    async def go():
+        conn = await asyncpg.connect(client.app_state_dsn)
+        try:
+            return await conn.fetch(sql, *args)
+        finally:
+            await conn.close()
+
+    return asyncio.run(go())
+
+
+def test_scores_are_saved_once_and_then_read(client):
+    _get(client, "/leads/positive")
+    # The replies saved before migration 013 (none had a score) were scored on that load and saved.
+    rows = _db(client, "select c.name, s.score_data, s.scored_with from inbox_replies s"
+                       " join contacts c on c.id = s.contact_id where s.auto_label is null")
+    assert rows and all(r["scored_with"] == reply_rules.RULES_VERSION for r in rows)
+    kate = next(json.loads(r["score_data"]) for r in rows if r["name"] == "Keyword Kate")
+    assert kate["score"] == 1.0 and kate["preview"] == "Sounds great, send me some times."
+    # From now on the saved score is what counts: changed in the database, the page follows it.
+    kate_id = "(select id from contacts where name = 'Keyword Kate')"
+    changed = {**kate, "score": 0.1, "hits": [{"phrase": "no thanks", "weight": -0.3}]}
+    _db(client, f"update inbox_replies set score_data = $1::jsonb where contact_id = {kate_id}",  # noqa: S608
+        json.dumps(changed))
+    try:
+        assert "Keyword Kate" in [r["name"] for r in _get(client, "/leads/positive")["notInterested"]]
+        # New rules (RULES_VERSION bumped): scored again from the text, and saved with the new version.
+        _db(client, f"update inbox_replies set scored_with = 0 where contact_id = {kate_id}")  # noqa: S608
+        assert "Keyword Kate" in [r["name"] for r in _get(client, "/leads/positive")["positive"]]
+        (row,) = _db(client, f"select score_data, scored_with from inbox_replies where contact_id = {kate_id}")  # noqa: S608
+        assert row["scored_with"] == reply_rules.RULES_VERSION and json.loads(row["score_data"])["score"] == 1.0
+    finally:
+        _db(client, f"update inbox_replies set score_data = null, scored_with = null"  # noqa: S608
+                    f" where contact_id = {kate_id}")
 
 
 def test_follow_up_column(client):

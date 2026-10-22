@@ -26,6 +26,7 @@ readable detail, never 401 / 409 (the dashboard signs the user out on those).
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -83,6 +84,8 @@ async def check() -> dict:
             raise HTTPException(exc.status, str(exc)) from exc
         except asyncpg.UndefinedTableError as exc:
             raise HTTPException(503, MIGRATION) from exc
+        except asyncpg.UndefinedColumnError as exc:
+            raise HTTPException(503, data.SCORES_MIGRATION) from exc
         except asyncpg.PostgresError as exc:
             log.error("Inbox check failed in the database", exc_info=True)
             raise HTTPException(503, "Couldn't save what was read from Gmail: the database refused it. Try again.") from exc
@@ -278,14 +281,22 @@ async def _process(pool: asyncpg.Pool, gid: str, msg: dict | None, own: str) -> 
         if reply_rules.is_auto_reply(m["headers"], m["subject"]):
             auto_label = "ooo"
         outcome = "reply"
+    # A person's reply is scored once, here, and Positive Leads reads the saved score (migrations/013). Automatic mail
+    # (out-of-office, bounce) isn't listed there: it is scored only if a person relabels it.
+    scored = None
+    if auto_label is None:
+        ours = await pool.fetchval("select body from emails where id = $1", email["id"])
+        scored = json.dumps(reply_rules.score_saved(m["text"], ours))
     async with pool.acquire() as c, c.transaction():
         stored = await c.fetchval(
             """insert into inbox_replies (gmail_message_id, gmail_thread_id, message_id, email_id, contact_id,
-                                          match_method, from_email, subject, body, received_at, auto_label)
-               values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                                          match_method, from_email, subject, body, received_at, auto_label,
+                                          score_data, scored_with)
+               values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
                on conflict (gmail_message_id) do nothing returning id""",
             gid, m["thread_id"], m["message_id"], email["id"], email["contact_id"], method, m["from_email"],
             m["subject"][:1000] or None, m["text"], m["received_at"], auto_label,
+            scored, reply_rules.RULES_VERSION if scored else None,
         )  # fmt: skip
         await c.execute(_SEEN, gid, outcome)
     return outcome, stored is not None and auto_label is None
