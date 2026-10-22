@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.auth import current_user
-from app.data import PAGE_SIZE, Limit, PageNo, _page, _pg
+from app.data import PAGE_SIZE, Limit, PageNo, _page, _pg, refresh_leads
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -74,5 +74,6 @@ async def add_contact(lead_id: str, body: ManualContact, user: User) -> dict:
     if result != "ok":
         status, detail = _REFUSED.get(result, (503, "Couldn't save the email."))
         raise HTTPException(status, detail)
+    await refresh_leads()
     log.info("Contact added for %s by %s", company, who)
     return {"ok": True}

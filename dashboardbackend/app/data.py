@@ -38,42 +38,16 @@ SCORES_MIGRATION = "Run migrations/013_reply_scores.sql in the Supabase SQL edit
 # A lead is a contact of a company, or a company still in the pipeline that has no contact yet ('No Contact': qualified,
 # or waiting for a person on Needs Contact). Companies the agent only discovered or rejected are not leads. Every lead
 # gets a 1-based number (oldest first) so the UI can show "#12". A company's id is its own; a contact's is the contact's.
-_LEADS = """
-select x.*, row_number() over (order by x.added_at, x.id) as number from (
-select c.id,
-       coalesce(c.name, c.email, co.name) as name, c.role as title, co.name as company,
-       'https://' || co.domain as company_url, co.source_url as profile_url, c.email,
-       -- What the company does: the agent's project summary for it, else its industry.
-       coalesce(nullif(btrim(co.project_summary), ''), nullif(btrim(co.industry), '')) as about,
-       -- Where the agent found the lead: 'leadgen:search' -> 'search', 'leadgen:feed:hn_hiring' -> 'hn_hiring'.
-       coalesce(nullif(regexp_replace(lower(coalesce(co.source, '')), '^(leadgen:)?(feed:)?', ''), ''), 'other')
-         as source,
-       -- Where outreach stands: a reply from a person wins, then a bounce, then a delivered email; otherwise nothing
-       -- has been sent yet. Any mail from the lead counts as a reply, including a new thread from their address (we
-       -- emailed them first). Out-of-office and bounce messages are automatic, so they don't count.
-       case when exists (select 1 from inbox_replies s
-                         left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
-                         where s.contact_id = c.id and coalesce(hl.label, s.auto_label, '') not in ('ooo', 'bounce'))
-              then 'Responded'
-            when exists (select 1 from emails e where e.contact_id = c.id and e.status = 'bounced')
-              or exists (select 1 from inbox_replies s where s.contact_id = c.id and s.auto_label = 'bounce')
-              then 'Bounced'
-            when exists (select 1 from emails e where e.contact_id = c.id
-                                                and e.status = 'sent' and e.sent_at is not null)
-              then 'Sent'
-            else 'Not Sent' end as status,
-       c.collected_at as added_at, c.last_engaged_at as last_contact_at
-from contacts c join companies co on co.id = c.company_id
-union all
-select co.id, co.name, null, co.name, 'https://' || co.domain, co.source_url, null,
-       coalesce(nullif(btrim(co.project_summary), ''), nullif(btrim(co.industry), '')),
-       coalesce(nullif(regexp_replace(lower(coalesce(co.source, '')), '^(leadgen:)?(feed:)?', ''), ''), 'other'),
-       'No Contact', co.created_at, null
-from companies co
-where co.lead_status not in ('DISCOVERED', 'REJECTED')
-  and not exists (select 1 from contacts c where c.company_id = co.id)
-) x
-"""
+_LEADS = "select * from lead_my"
+
+
+async def refresh_leads() -> None:
+    """Rebuilds lead_my (migrations/015_leads_my.sql). Call it after anything that changes a lead's status. A failure
+    only leaves the list a little stale, so it is logged, not raised."""
+    try:
+        await (await _pg()).execute("select public.dashboard_refresh_leads()")
+    except Exception:  # noqa: BLE001 - the request is answered either way
+        log.warning("Could not refresh lead_my", exc_info=True)
 
 # delivery_status: 'Sent' means the agent sent it without an error (not proof it reached the inbox); 'Failed' = bounced,
 # as the agent recorded it or as a bounce notice read from Gmail says (the same rule as the lead's Bounced status).
@@ -97,6 +71,12 @@ select * from (
 ) s
 """
 
+_FAILED_COUNT = """
+select count(*) from emails e
+where e.status in ('sent', 'bounced') and e.sent_at is not null
+and (e.status = 'bounced' or exists (select 1 from inbox_replies b where b.email_id = e.id and b.auto_label = 'bounce'))
+"""
+
 # Replies read from Gmail, with a person's label in place of the automatic one (out-of-office / bounce), numbered
 # oldest first so "#12" stays put.
 _REPLIES = """
@@ -116,7 +96,7 @@ select *, row_number() over (order by received_at, id) as number from (
 ) u
 """
 
-_BLOGS = """
+_BLOGS_SQL = """
 select s.*, row_number() over (order by s.added_at, s.id) as number from (
   select p.id, p.created_at as added_at, p.title,
          case when p.status = 'published' then 'Posted' else 'Not Posted' end as status,
@@ -124,16 +104,24 @@ select s.*, row_number() over (order by s.added_at, s.id) as number from (
               when p.cms_url is not null then 'WordPress'
               when p.linkedin_url is not null then 'LinkedIn' end as site,
          coalesce(p.cms_url, p.devto_url, p.linkedin_url) as url,
-         p.published_at as posted_at, p.body_md as content
+         p.published_at as posted_at, {p_body} as content
   from content_posts p
   -- The ones this backend posts (app/blog_posts.py, migrations/011_blog_posts.sql); the Marketing Agent posted the
   -- ones above. A Dev.to draft, a failed or an unfinished post is Not Posted.
   union all
   select b.id, b.started_at, b.title,
          case when b.status = 'posted' and not b.draft then 'Posted' else 'Not Posted' end,
-         'Dev.to', b.url, b.posted_at, b.body_md
+         'Dev.to', b.url, b.posted_at, {b_body}
   from blog_posts b
 ) s
+"""
+
+_BLOGS = _BLOGS_SQL.format(p_body="p.body_md", b_body="b.body_md")
+_BLOGS_LIST = _BLOGS_SQL.format(p_body="null::text", b_body="null::text")
+
+_POSTED_COUNT = """
+select (select count(*) from content_posts where status = 'published')
++ (select count(*) from blog_posts where status = 'posted' and not draft)
 """
 
 
@@ -193,10 +181,22 @@ async def _page(base: str, order: str, page: int, limit: int, where: str = "", a
     """One page of `base` (a select) -> { items, total, page, limit }. Filters go in SQL (`where`, args $1..$n),
     so only the requested rows leave the database. `order` must end in a unique column for stable pages."""
     sql = f"select * from ({base}) t {where}"  # noqa: S608 - base/where/order are constants, values are args
-    total = await _value(f"select count(*) from ({sql}) c", *args)  # noqa: S608
     n = len(args)
-    items = await _rows(f"{sql} order by {order} limit ${n + 1} offset ${n + 2}", *args, limit, (page - 1) * limit)
-    return {"items": items, "total": total or 0, "page": page, "limit": limit}
+    rows = await _rows(
+        f"select p.*, count(*) over () as total_rows from ({sql} order by {order}) p limit ${n + 1} offset ${n + 2}",  # noqa: S608
+        *args,
+        limit,
+        (page - 1) * limit,
+    )
+    if rows:
+        total = rows[0]["totalRows"]
+    elif page == 1:
+        total = 0
+    else:  # past the last page: no row carries the total, so count
+        total = await _value(f"select count(*) from ({sql}) c", *args)  # noqa: S608
+    for r in rows:
+        r.pop("totalRows")
+    return {"items": rows, "total": total or 0, "page": page, "limit": limit}
 
 # ---------- Leads ----------
 
@@ -349,10 +349,10 @@ async def positive_leads() -> dict:
                 join ({_HUMAN_REPLIES}) r on r.contact_id = l.id""",  # noqa: S608
             RULES_VERSION,
         )
+        # Same count as the dashboard's Responses: every lead with a reply written by a person, labelled or not.
+        replied = len({r["leadId"] for r in rows})
     except asyncpg.UndefinedColumnError as exc:
         raise HTTPException(503, SCORES_MIGRATION) from exc
-    # Same count as the dashboard's Responses: every lead with a reply written by a person, labelled or not.
-    replied = await _value(f"select count(*) from ({_LEADS}) l where status = 'Responded'")  # noqa: S608
     groups: dict[str, list[dict]] = {"positive": [], "review": [], "questions": [], "notInterested": [],
                                      "unsubscribe": []}
     latest: dict[str, str] = {}  # lead -> when they last wrote
@@ -501,7 +501,7 @@ async def sent_emails(
         args.append("Failed" if status == "failed" else "Sent")
         conds.append(f"delivery_status = ${len(args)}")
     out = await _page(_SENT, "sent_at desc, id", page, limit, _where(conds), tuple(args))
-    out["failed"] = await _value(f"select count(*) from ({_SENT}) s where delivery_status = 'Failed'") or 0  # noqa: S608
+    out["failed"] = await _value(_FAILED_COUNT) or 0
     return out
 
 
@@ -538,9 +538,9 @@ async def reply(reply_id: str) -> dict:
 @router.get("/blogs")
 async def blogs(page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
     """One page of posts (no content) plus `posted`: how many of all posts are published."""
-    out = await _page(_BLOGS, "number desc", page, limit)
+    out = await _page(_BLOGS_LIST, "number desc", page, limit)
     out["items"] = [_without(r, "content") for r in out["items"]]
-    out["posted"] = await _value(f"select count(*) from ({_BLOGS}) b where status = 'Posted'") or 0  # noqa: S608
+    out["posted"] = await _value(_POSTED_COUNT) or 0
     return out
 
 
