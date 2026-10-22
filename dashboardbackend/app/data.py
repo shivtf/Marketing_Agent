@@ -12,6 +12,7 @@ import logging
 import os
 import uuid
 from typing import Annotated, Any
+import time
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,6 +32,9 @@ from app.reply_rules import (
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
 
+_cache: dict[tuple, tuple[float, Any]] = {}
+CACHE_FOR = 15.0
+
 _pool: asyncpg.Pool | None = None
 _pool_lock = asyncio.Lock()  # the dashboard sends several requests at once; they must share one pool
 SCORES_MIGRATION = "Run migrations/013_reply_scores.sql in the Supabase SQL editor first."
@@ -48,6 +52,8 @@ async def refresh_leads() -> None:
         await (await _pg()).execute("select public.dashboard_refresh_leads()")
     except Exception:  # noqa: BLE001 - the request is answered either way
         log.warning("Could not refresh lead_my", exc_info=True)
+    finally:
+        clear_cache()  # even if the refresh failed: a label or contact just changed, so cached answers are out of date
 
 # delivery_status: 'Sent' means the agent sent it without an error (not proof it reached the inbox); 'Failed' = bounced,
 # as the agent recorded it or as a bounce notice read from Gmail says (the same rule as the lead's Bounced status).
@@ -124,6 +130,19 @@ select (select count(*) from content_posts where status = 'published')
 + (select count(*) from blog_posts where status = 'posted' and not draft)
 """
 
+async def cached(key:tuple, make) -> Any:
+    hit = _cache.get(key)
+    now = time.monotonic()
+    if hit and now - hit[0] < CACHE_FOR:
+        return hit[1]
+    value = await make()
+    if len(_cache) > 500:
+        _cache.clear()
+    _cache[key] = (now, value)
+    return value
+
+def clear_cache() -> None:
+    _cache.clear()
 
 async def _pg() -> asyncpg.Pool:
     global _pool
@@ -200,9 +219,7 @@ async def _page(base: str, order: str, page: int, limit: int, where: str = "", a
 
 # ---------- Leads ----------
 
-
-@router.get("/leads")
-async def leads(
+async def _leads(
     status: Status = None, source: Source = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
 ) -> dict:
     """Newest first: company and email; what the company does and other details are in /leads/{id}."""
@@ -219,9 +236,13 @@ async def leads(
     out["items"] = [_without(r, *hidden) for r in out["items"]]
     return out
 
+@router.get("/leads")
+async def leads(
+    status: Status = None, source: Source = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
+) -> dict:
+    return await cached(("leads", status, source, page, limit), lambda: _leads(status, source, page, limit))
 
-@router.get("/leads/stats")
-async def lead_stats() -> dict:
+async def _lead_stats() -> dict:
     rows = await _rows(f"select source, status, count(*) as n from ({_LEADS}) l group by 1, 2")  # noqa: S608
     by_source: dict[str, int] = {}
     for r in rows:
@@ -239,6 +260,9 @@ async def lead_stats() -> dict:
         "bySource": dict(sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))),  # most leads first
     }
 
+@router.get("/leads/stats")
+async def lead_stats() -> dict:
+    return await cached(("lead_stats",), _lead_stats)
 
 # Every reply of a lead, with a person's label if one was given (else the automatic out-of-office / bounce one).
 _LEAD_REPLIES = """
@@ -320,6 +344,41 @@ async def _save_scores(scores: list[tuple[str, dict]]) -> None:
         )
     except Exception:  # noqa: BLE001 - the page is answered either way
         log.warning("Could not save %d reply scores; they are worked out again next time", len(scores), exc_info=True)
+
+
+RESCORE_BATCH = 200
+
+
+async def rescore_stale(max_batches: int = 25) -> int:
+    """Scores the replies written by a person that have no saved score, or one from older rules (RULES_VERSION), and
+    saves it, so Positive Leads only reads saved scores instead of scoring on a page load. Called after each inbox check.
+    Best effort: a failure only means Positive Leads scores them itself on the next load. Returns how many it scored."""
+    done = 0
+    try:
+        for _ in range(max_batches):
+            rows = await (await _pg()).fetch(
+                """select s.id, s.body, e.body as sent_body
+                   from inbox_replies s
+                   left join reply_labels hl on hl.source = 'inbox' and hl.reply_id = s.id
+                   left join emails e on e.id = s.email_id
+                   where s.contact_id is not null and s.scored_with is distinct from $1
+                     and coalesce(hl.label, s.auto_label, '') not in ('ooo', 'bounce')
+                   limit $2""",
+                RULES_VERSION, RESCORE_BATCH,
+            )
+            if not rows:
+                break
+            # Scoring is CPU work: off the event loop, so requests are not held up while a batch is worked out.
+            scores = await asyncio.to_thread(
+                lambda rows=rows: [(str(r["id"]), score_saved(r["body"], r["sent_body"])) for r in rows]
+            )
+            await _save_scores(scores)
+            done += len(rows)
+            if len(rows) < RESCORE_BATCH:
+                break
+    except Exception:  # noqa: BLE001 - e.g. migration 013 not run; the page scores them itself
+        log.warning("Could not rescore replies in the background", exc_info=True)
+    return done
 
 
 def _follow_up_order(items: list[dict]) -> list[dict]:
@@ -489,10 +548,7 @@ def _where(conds: list[str]) -> str:
     return f"where {' and '.join(conds)}" if conds else ""
 
 
-@router.get("/emails/sent")
-async def sent_emails(
-    q: Search = None, status: SentStatus = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
-) -> dict:
+async def _sent_emails(q: str | None, status: str | None, page: int, limit: int) -> dict:
     """One page of sent emails (newest first), searchable by recipient, company and subject, plus `failed`: how many
     of all sent emails bounced."""
     conds, args = [], []
@@ -500,9 +556,20 @@ async def sent_emails(
     if status:
         args.append("Failed" if status == "failed" else "Sent")
         conds.append(f"delivery_status = ${len(args)}")
-    out = await _page(_SENT, "sent_at desc, id", page, limit, _where(conds), tuple(args))
-    out["failed"] = await _value(_FAILED_COUNT) or 0
+    out, failed = await asyncio.gather(
+        _page(_SENT, "sent_at desc, id", page, limit, _where(conds), tuple(args)),
+        _value(_FAILED_COUNT),
+    )
+    out["failed"] = failed or 0
     return out
+
+
+@router.get("/emails/sent")
+async def sent_emails(
+    q: Search = None, status: SentStatus = None, page: PageNo = 1, limit: Limit = PAGE_SIZE
+) -> dict:
+    return await cached(("sent", q, status, page, limit), lambda: _sent_emails(q, status, page, limit))
+
 
 
 @router.get("/emails/sent/{email_id}")
@@ -535,13 +602,18 @@ async def reply(reply_id: str) -> dict:
 # ---------- Blogs ----------
 
 
+async def _blogs(page: int, limit: int) -> dict:
+    """One page of posts (no content) plus `posted`: how many of all posts are published."""
+    out,posted = await asyncio.gather(_page(_BLOGS_LIST, "number desc", page, limit),
+                                    _value(_POSTED_COUNT))
+    out["items"] = [_without(r, "content") for r in out["items"]]
+    out["posted"] = posted or 0
+    return out
+
+
 @router.get("/blogs")
 async def blogs(page: PageNo = 1, limit: Limit = PAGE_SIZE) -> dict:
-    """One page of posts (no content) plus `posted`: how many of all posts are published."""
-    out = await _page(_BLOGS_LIST, "number desc", page, limit)
-    out["items"] = [_without(r, "content") for r in out["items"]]
-    out["posted"] = await _value(_POSTED_COUNT) or 0
-    return out
+    return await cached(("blogs", page, limit), lambda: _blogs(page, limit))
 
 
 @router.get("/blogs/{blog_id}")

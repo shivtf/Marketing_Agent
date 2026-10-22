@@ -93,25 +93,17 @@ def forget_checks(user_id: str, session_id: str | None = None) -> None:
 # removed" until it expires (up to an hour), and the account's sessions may still exist.
 
 
-async def _account(user_id: str, session_id: str) -> tuple[bool, bool]:
-    """(session ended, account removed or banned) for the token's user and sign-in session."""
+async def _session_state(user_id: str, session_id: str) -> tuple[bool, bool, bool]:
+    """(session ended, account removed or banned, this session holds the account) in one database round trip: the
+    account's state, then the claim, unless the session is already over (migrations/016_check_session.sql)."""
     from app.data import _pg  # here, not at the top: app.data imports this module
 
-    row = await (await _pg()).fetchrow(
-        "select session_alive, removed from public.dashboard_account_state($1::uuid, $2::uuid)", user_id, session_id
-    )
-    if row is None:  # the user no longer exists
-        return True, True
-    return not row["session_alive"], row["removed"]
-
-
-async def _claim(user_id: str, session_id: str) -> bool:
-    """Take or keep the account for this session; False while another session is using it."""
-    from app.data import _pg
-
     # HOLD_FOR is a constant; the values are $1/$2.
-    sql = f"select public.dashboard_claim($1::uuid, $2::uuid, interval '{HOLD_FOR}')"
-    return await (await _pg()).fetchval(sql, user_id, session_id) is not None
+    row = await (await _pg()).fetchrow(
+        f"select ended, is_removed, holds from public.dashboard_check_session($1::uuid, $2::uuid, interval '{HOLD_FOR}')",  # noqa: S608
+        user_id, session_id,
+    )
+    return row["ended"], row["is_removed"], row["holds"]
 
 
 async def release(user_id: str, session_id: str) -> None:
@@ -133,8 +125,7 @@ async def _check_session(claims: dict) -> None:
     if now - _checked.get(key, float("-inf")) < CHECKED_FOR:
         return
     try:
-        ended, removed = await _account(claims["sub"], session_id)
-        holds = ended or removed or await _claim(claims["sub"], session_id)
+        ended, removed, holds = await _session_state(claims["sub"], session_id)
     except asyncpg.UndefinedTableError as exc:
         log.error("Sign-in check failed: dashboard_presence is missing", exc_info=True)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, NO_PRESENCE_TABLE) from exc
