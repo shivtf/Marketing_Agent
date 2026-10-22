@@ -24,6 +24,7 @@ their files (and the indexes of 008, and 012 for the do-not-email list). The age
 
 import asyncio
 import base64
+import json
 import pathlib
 import secrets
 import time
@@ -35,7 +36,7 @@ import pytest
 from conftest import throwaway_postgres
 from fastapi.testclient import TestClient
 
-from app import data, gmail
+from app import data, gmail, reply_rules
 from app.main import app
 
 SECRET = secrets.token_hex(32)  # signs fake test tokens only
@@ -167,6 +168,8 @@ async def _seed(dsn):
         await conn.execute((MIGRATIONS / "008_inbox_indexes.sql").read_text())  # safe to run twice
         await conn.execute((MIGRATIONS / "012_unsubscribe_suppression.sql").read_text())
         await conn.execute((MIGRATIONS / "012_unsubscribe_suppression.sql").read_text())  # safe to run twice
+        await conn.execute((MIGRATIONS / "013_reply_scores.sql").read_text())
+        await conn.execute((MIGRATIONS / "013_reply_scores.sql").read_text())  # safe to run twice
         await conn.execute("insert into gmail_connection (email, refresh_token) values ($1, $2)", OWN, SEALED)
         for name, (msgid, thread, status) in LEADS.items():
             company = await conn.fetchval(
@@ -257,6 +260,18 @@ def test_a_second_check_reads_nothing_new(env):
     assert res.status_code == 200 and res.json()["processed"] == 0 and res.json()["newReplies"] == 0
     # No email of ours was recorded since, so nothing judged "not a reply" is looked at again either.
     assert res.json()["rechecked"] == 0 and len(env["gmail"].fetched) == before
+
+
+def test_the_check_saves_each_replys_score(env):
+    # Runs before any Positive Leads load: these scores come from the check itself, not from the page.
+    rows = _db(env, "select c.name, s.auto_label, s.score_data, s.scored_with from inbox_replies s"
+                    " left join contacts c on c.id = s.contact_id")
+    people = [r for r in rows if r["auto_label"] is None]
+    assert people and all(r["scored_with"] == reply_rules.RULES_VERSION for r in people)
+    priya = next(json.loads(r["score_data"]) for r in people if r["name"] == "Priya")
+    assert priya["score"] == 0.75 and priya["preview"] == "Yes, let's talk next week."
+    # Out-of-office and bounces aren't listed on Positive Leads, so they aren't scored.
+    assert all(r["score_data"] is None and r["scored_with"] is None for r in rows if r["auto_label"])
 
 
 def test_positive_leads_groups(env):

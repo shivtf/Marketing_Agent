@@ -1,3 +1,4 @@
+import json
 import secrets
 import time
 
@@ -114,7 +115,7 @@ def _reply(id_, label="interested", body="Hi Alex,\n\nSounds good.\n\nThanks", a
     """One reply as the /leads/positive query returns it (lead: its lead, by default a lead of its own).
     labelled: a person chose `label`."""
     return {"id": id_, "leadId": lead or f"lead-{id_}", "label": label, "body": body, "sentBody": None,
-            "repliedAt": at,
+            "scoreData": None, "scoredWith": None, "repliedAt": at,
             "answeredAt": answered, "labelledAt": "2026-10-02T09:00:00+00:00" if labelled else None}
 
 
@@ -129,8 +130,14 @@ def positive_rows(monkeypatch):
             assert "status = 'Responded'" in sql
             return 9
 
+        async def fake_save(scores):
+            saved.extend(scores)
+
         monkeypatch.setattr(data, "_rows", fake_rows)
         monkeypatch.setattr(data, "_value", fake_value)
+        monkeypatch.setattr(data, "_save_scores", fake_save)
+        return saved
+    saved = []  # the scores the page saved: [(reply id, score)]
     return use
 
 
@@ -194,6 +201,33 @@ def test_positive_leads_preview(positive_rows):
     positive_rows([_reply("a", "interested", body=f"Hi Alex,\n\n{'x' * 150}\n\nThanks")])
     (item,) = client.get("/leads/positive", headers=_auth()).json()["positive"]
     assert item["preview"] == "x" * 99 + "…"
+
+
+def test_positive_leads_use_the_saved_score(positive_rows):
+    # Saved with the current rules: used as is, even though the text (not fetched) would score differently.
+    saved = {"score": 0.1, "hits": [{"phrase": "no thanks", "weight": -0.3}], "question": False, "later": False,
+             "referral": False, "unsubscribe": False, "preview": "No thanks."}
+    rows = [{**_reply("a", None, body=None, labelled=False), "scoreData": json.dumps(saved),
+             "scoredWith": reply_rules.RULES_VERSION}]
+    stored = positive_rows(rows)
+    (item,) = client.get("/leads/positive", headers=_auth()).json()["notInterested"]
+    assert (item["score"], item["preview"], item["scoreHits"]) == (0.1, "No thanks.", saved["hits"])
+    assert stored == []  # nothing worked out, so nothing saved
+
+
+def test_positive_leads_score_and_save_what_has_no_current_score(positive_rows):
+    old = {"score": 0.1, "hits": [], "question": False, "later": False, "referral": False, "unsubscribe": False,
+           "preview": "old"}
+    stored = positive_rows([
+        _reply("new", None, body="Sounds great, let's talk.", labelled=False),  # never scored
+        {**_reply("old", None, body="Sounds great, let's talk.", labelled=False),  # scored with older rules
+         "scoreData": json.dumps(old), "scoredWith": reply_rules.RULES_VERSION - 1},
+    ])
+    res = client.get("/leads/positive", headers=_auth()).json()
+    assert {r["id"] for r in res["positive"]} == {"new", "old"}
+    assert [i for i, _ in stored] == ["new", "old"]
+    assert stored[0][1] == reply_rules.score_saved("Sounds great, let's talk.")
+    assert stored[0][1]["preview"] == "Sounds great, let's talk." and stored[0][1]["unsubscribe"] is False
 
 
 def test_preview_drops_greeting_and_quoted_mail():
@@ -265,6 +299,7 @@ def lead_db(monkeypatch):
 
     state = {"reply": {"id": "r1", "label": None, "email_id": "e0", "labelled_by": None, "labelled_at": None,
                        "received_at": dt.datetime(2026, 10, 5, 9, 30, tzinfo=dt.UTC), "sent_body": None,
+                       "score_data": None, "scored_with": None,
                        "body": "Hi Alex,\n\nYes, let's talk.\n\nOn Mon, 5 Oct 2026, Alex <a@x.co> wrote:\n> Interested?"}}
 
     async def one(*_):
@@ -277,8 +312,12 @@ def lead_db(monkeypatch):
     async def pg():
         return Pool()
 
+    async def save(scores):
+        state["saved"] = scores
+
     monkeypatch.setattr(data, "_one", one)
     monkeypatch.setattr(data, "_pg", pg)
+    monkeypatch.setattr(data, "_save_scores", save)
     return state
 
 
@@ -290,6 +329,21 @@ def test_lead_includes_what_the_person_wrote(lead_db):
     # Not labelled: its keyword score ("let's talk", +0.25) puts it in Positive.
     assert res["replyGroup"] == "positive" and res["labelledBy"] is None and res["score"] == 0.75
     assert res["scoreHits"] == [{"phrase": "let's talk", "weight": 0.25}]
+
+
+def test_lead_saves_the_score_it_worked_out(lead_db):
+    client.get("/leads/7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d", headers=_auth())
+    ((reply_id, scored),) = lead_db["saved"]
+    assert reply_id == "r1" and scored["score"] == 0.75
+
+
+def test_lead_uses_the_saved_score(lead_db):
+    lead_db["reply"].update(score_data=json.dumps({"score": 0.2, "hits": [], "question": False, "later": False,
+                                                   "referral": False, "unsubscribe": False, "preview": ""}),
+                            scored_with=reply_rules.RULES_VERSION)
+    res = client.get("/leads/7d4c1a52-3f0e-4b8a-9c6d-2e1f0a9b8c7d", headers=_auth()).json()
+    assert res["score"] == 0.2 and res["replyGroup"] == "notInterested" and "saved" not in lead_db
+    assert res["latestReply"]["text"] == "Hi Alex,\n\nYes, let's talk."  # the text shown is still the reply's own
 
 
 def test_lead_reply_that_is_all_quoted_is_shown_whole(lead_db):

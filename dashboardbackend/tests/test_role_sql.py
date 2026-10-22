@@ -14,7 +14,7 @@ import pytest
 from conftest import throwaway_postgres
 from fastapi.testclient import TestClient
 
-from app import data
+from app import data, reply_rules
 from app.main import app
 
 SECRET = secrets.token_hex(32)  # signs fake test tokens only
@@ -64,7 +64,7 @@ async def _seed(dsn):
         await conn.execute(SUPABASE)
         for name in ("001_dashboard_presence", "006_gmail_connection", "007_inbox_replies", "008_inbox_indexes",
                      "009_dashboard_backend_role", "010_blog_approval", "011_blog_posts",
-                     "012_unsubscribe_suppression"):
+                     "012_unsubscribe_suppression", "013_reply_scores"):
             sql = (MIGRATIONS / f"{name}.sql").read_text()
             await conn.execute(sql)
             await conn.execute(sql)  # each is safe to run again
@@ -139,6 +139,9 @@ def test_a_reply_its_label_and_the_sent_email(env):
     c = env["client"]
     (row,) = c.get("/leads/positive", headers=_auth()).json()["positive"]
     assert row["name"] == "Priya" and row["preview"] == "Yes, let's talk."
+    # The limited login may save the score it worked out (a refusal would only be logged, so it is checked here).
+    assert [r["scored_with"] for r in _as(env["dsn"], "select scored_with from inbox_replies")] == [
+        reply_rules.RULES_VERSION]
     assert c.post("/inbox/label", headers=_auth(), json={"replyId": row["replyId"], "label": "interested"}).json() == {
         "ok": True}
     assert c.get(f"/leads/by-reply/{row['id']}", headers=_auth()).json()["labelledBy"]["by"] == "ana@team.test"
