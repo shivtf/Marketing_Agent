@@ -3,7 +3,7 @@
 // and refetched in the background when it goes stale (window refocus, reconnect). Also holds the leads filter,
 // the page each list is on and the Positive Leads tab/search/sort, so they survive tab switches and the drawer can
 // step through exactly what is shown.
-import { createContext, useCallback, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import {
   QueryClient, QueryClientProvider, keepPreviousData, skipToken, useQuery, useQueryClient,
 } from '@tanstack/react-query';
@@ -33,12 +33,29 @@ const LIST_FILTERS = { sent: { q: '', status: 'all' } };
 // Agent status: poll every 3 s while a pause/resume is being applied, otherwise every 5 s (dashboard-integration
 // section 3.5: an offline assistant shows within seconds, never as an endless spinner).
 const OPTIONS = {
+  positive: { staleTime: 60_000 }, // the biggest payload: do not refetch it on every window focus
   agent: { refetchInterval: (q) => (q.state.data && !q.state.data.inSync ? 3000 : 5000) },
 };
 const EMPTY = {
   agent: null, stats: null,
   positive: { positive: [], review: [], questions: [], notInterested: [], unsubscribe: [], repliedLeads: 0 },
   needsContact: { items: [], total: 0 },
+};
+
+// Warm the cache when the pointer or focus reaches a sidebar link, so the page opens with data instead of a skeleton.
+// prefetchQuery does nothing while the cached data is still fresh.
+export const ROUTE_PREFETCH = {
+  '/dashboard': (qc) => {
+    qc.prefetchQuery({ queryKey: ['section', 'stats'], queryFn: FETCHERS.stats });
+    const f = { status: 'all', source: 'all' };
+    qc.prefetchQuery({ queryKey: ['list', 'leads', 1, f], queryFn: () => LISTS.leads(1, f) });
+  },
+  '/positive-leads': (qc) => qc.prefetchQuery({ queryKey: ['section', 'positive'], queryFn: FETCHERS.positive }),
+  '/needs-contact': (qc) => qc.prefetchQuery({ queryKey: ['section', 'needsContact'], queryFn: FETCHERS.needsContact }),
+  '/history': (qc) => {
+    const f = LIST_FILTERS.sent;
+    qc.prefetchQuery({ queryKey: ['list', 'sent', 1, f], queryFn: () => LISTS.sent(1, f) });
+  },
 };
 
 // Positive Leads search + sort ({ q, sort, tab }), applied to one tab. 'followup' keeps the tab's own order
@@ -63,8 +80,11 @@ export function toSection(query, empty) {
   return { status, data: query.data ?? empty, reload: () => query.refetch(), fetching: query.isFetching };
 }
 
+// Two contexts so typing in the Positive Leads search does not re-render what only reads the lead/list filters.
 const FilterCtx = createContext(null);
+const PositiveCtx = createContext(null);
 export const useLeadsFilter = () => useContext(FilterCtx);
+export const usePositiveView = () => useContext(PositiveCtx);
 
 export function DataProvider({ children }) {
   const [client] = useState(() => new QueryClient({
@@ -85,10 +105,15 @@ export function DataProvider({ children }) {
     setListFilters((f) => ({ ...f, [key]: { ...f[key], ...changes } }));
     setPages((p) => ({ ...p, [key]: 1 }));
   }, []);
+  const filterValue = useMemo(
+    () => ({ filter, setFilter, pages, setPage, listFilters, setListFilter }),
+    [filter, setFilter, pages, setPage, listFilters, setListFilter],
+  );
+  const positiveValue = useMemo(() => ({ positiveView, setPositiveView }), [positiveView]);
   return (
     <QueryClientProvider client={client}>
-      <FilterCtx.Provider value={{ filter, setFilter, pages, setPage, positiveView, setPositiveView, listFilters, setListFilter }}>
-        {children}
+      <FilterCtx.Provider value={filterValue}>
+        <PositiveCtx.Provider value={positiveValue}>{children}</PositiveCtx.Provider>
       </FilterCtx.Provider>
     </QueryClientProvider>
   );
@@ -97,7 +122,11 @@ export function DataProvider({ children }) {
 // A section's data, loaded on first use. `key` may be null (nothing to load yet).
 export function useSection(key) {
   const query = useQuery({ queryKey: ['section', key], queryFn: key ? FETCHERS[key] : skipToken, ...OPTIONS[key] });
-  return toSection(query, key ? EMPTY[key] : []);
+  const { data, isError, isFetching, refetch } = query;
+  return useMemo(
+    () => toSection({ data, isError, isFetching, refetch }, key ? EMPTY[key] : []),
+    [data, isError, isFetching, refetch, key],
+  );
 }
 
 // The current page of a paged list (leads use the leads filter, History lists their own): { status, data: { items,
@@ -112,17 +141,19 @@ export function useList(key) {
     queryFn: key ? () => LISTS[key](page, listFilter) : skipToken,
     placeholderData: keepPreviousData,
   });
-  return {
-    ...toSection(query, EMPTY_PAGE), setPage: (n) => setPage(key, n),
+  const { data, isError, isFetching, refetch } = query;
+  return useMemo(() => ({
+    ...toSection({ data, isError, isFetching, refetch }, EMPTY_PAGE),
+    setPage: (n) => setPage(key, n),
     listFilter, setListFilter: (changes) => setListFilter(key, changes),
-  };
+  }), [data, isError, isFetching, refetch, key, setPage, listFilter, setListFilter]);
 }
 
 // Replace a section's cached data locally (optimistic updates). Cancels in-flight fetches so they can't overwrite it.
 export function useUpdateSection() {
   const client = useQueryClient();
-  return (key, fn) => {
+  return useCallback((key, fn) => {
     client.cancelQueries({ queryKey: ['section', key] });
     client.setQueryData(['section', key], (data) => fn(data ?? EMPTY[key]));
-  };
+  }, [client]);
 }

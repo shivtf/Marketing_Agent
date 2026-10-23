@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon } from './Icon';
 import { ErrorBox, Skeleton } from './ui';
-import { DataProvider, useSection } from './DataProvider';
+import { useQueryClient } from '@tanstack/react-query';
+import { DataProvider, ROUTE_PREFETCH, useSection } from './DataProvider';
 import { ADMINS_RESUME, agentButton, BUTTON_LABEL, describeAgent, useAgentAction } from './agent';
 import { DrawerProvider } from './DrawerProvider';
 import * as auth from '@/core/auth';
@@ -65,6 +66,8 @@ function AgentStatusBox({ admin }) {
 // over the page while hovered (or while a keyboard user tabs through it). On narrow screens it becomes a row across the top that scrolls sideways (the status box is hidden there).
 export function Sidebar({ admin }) {
   const pathname = usePathname();
+  const qc = useQueryClient();
+  const warm = (href) => ROUTE_PREFETCH[href]?.(qc);
 
   // Keep the active link visible when the row scrolls sideways.
   useEffect(() => { document.querySelector('.side-link.active')?.scrollIntoView({ inline: 'center', block: 'nearest' }); }, [pathname]);
@@ -79,7 +82,8 @@ export function Sidebar({ admin }) {
         {[...TABS, ...(admin ? ADMIN_TABS : [])].map((t) => {
           const on = pathname === t.href;
           return (
-            <Link key={t.href} className={`side-link${on ? ' active' : ''}`} href={t.href} aria-current={on ? 'page' : undefined} title={t.label}>
+            <Link key={t.href} className={`side-link${on ? ' active' : ''}`} href={t.href} aria-current={on ? 'page' : undefined} title={t.label}
+              onMouseEnter={() => warm(t.href)} onFocus={() => warm(t.href)}>
               <Icon name={t.icon} /><span className="side-label">{t.label}</span>
             </Link>
           );

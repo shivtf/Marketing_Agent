@@ -1,5 +1,6 @@
 'use client';
 // Page 2: History: emails sent (searchable and filterable on the server) and the replies received in Gmail.
+import { memo, useMemo } from 'react';
 import { OpenRow } from './OpenRow';
 import { useList } from './DataProvider';
 import { Badge, CardHead, ViewCell, DataTable, Pager, SearchBox } from './ui';
@@ -8,10 +9,19 @@ import { pad, fmtDate, toneOf } from '@/core/format';
 
 const SENT_FILTERS = [['all', 'All'], ['sent', 'Sent'], ['failed', 'Failed']];
 
+// One row; unchanged items keep their element, so a page turn or filter only renders what changed.
+const HistoryRow = memo(function HistoryRow({ kind, item, row }) {
+  return <OpenRow kind={kind} id={item.id}>{row(item)}</OpenRow>;
+});
+
 function HistoryCard({ section, icon, title, totalLabel, extra, kind, emptyText, head, row, tools }) {
   const list = useList(section);
   const { status, data, reload, fetching, listFilter, setListFilter } = list;
   const filtered = !!listFilter && Object.entries(listFilter).some(([k, v]) => (k === 'q' ? v : v !== 'all'));
+  const rows = useMemo(
+    () => data.items.map((x) => <HistoryRow key={x.id} kind={kind} item={x} row={row} />),
+    [data.items, kind, row],
+  );
   return (
     <div className="card">
       <CardHead icon={icon} title={title} />
@@ -32,7 +42,7 @@ function HistoryCard({ section, icon, title, totalLabel, extra, kind, emptyText,
         onRetry={reload}
         busy={fetching}
         scrollKey={data.page}
-        rows={data.items.map((x) => <OpenRow key={x.id} kind={kind} id={x.id}>{row(x)}</OpenRow>)}
+        rows={rows}
       />
       <Pager list={list} />
     </div>

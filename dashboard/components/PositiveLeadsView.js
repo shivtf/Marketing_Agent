@@ -10,34 +10,38 @@
 // most every AUTO_CHECK_MINUTES).
 // The selected tab lives in the URL (?tab=check) so reloads, Back and shared links keep it.
 // Search (name, company, reply text) and sort apply to the selected tab and to the drawer's Previous/Next.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { OpenRow } from './OpenRow';
-import { useLeadsFilter, useSection, visiblePositive } from './DataProvider';
+import { usePositiveView, useSection, visiblePositive } from './DataProvider';
 import { Badge, DataTable, StatCards } from './ui';
 import { Icon } from './Icon';
 import { checkInbox } from '@/core/api';
 import { fmtDate, daysSince } from '@/core/format';
 import { byPerson, OVERDUE_DAYS, TABS, whyOf } from '@/core/positiveTabs';
 
+const ROWS_STEP = 100; // rows put on the page at a time; "Show more" adds another step
 const AUTO_CHECK_MINUTES = 5; // opening the page reads Gmail again only after this long
 let lastAutoCheck = 0; // per browser tab, so moving between pages doesn't read Gmail every time
 let lastCheck = null; // { at, result }: the last Gmail check in this browser tab, shown when the page opens again
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-function PositiveStatCards({ section, tabs }) {
-  const { status, data, reload } = section;
+const PositiveStatCards = memo(function PositiveStatCards({ status, data, reload, tabs }) {
   // Every number counts people. A lead is interested when they sent a positive email and have not said no since: a
   // later question or unclear email keeps them interested, a later "not interested" or "unsubscribe" does not.
-  const lastYes = new Map(); // lead -> when they last wrote a positive email
-  const lastNo = new Map(); // lead -> when they last said no or asked to stop
-  for (const [key, seen] of [['positive', lastYes], ['notInterested', lastNo], ['unsubscribe', lastNo]]) {
-    for (const l of data[key]) if (!(seen.get(l.leadId) >= l.repliedAt)) seen.set(l.leadId, l.repliedAt);
-  }
-  const interested = [...lastYes].filter(([lead, at]) => !(lastNo.get(lead) > at)).length;
+  const { interested, overdue } = useMemo(() => {
+    const lastYes = new Map(); // lead -> when they last wrote a positive email
+    const lastNo = new Map(); // lead -> when they last said no or asked to stop
+    for (const [key, seen] of [['positive', lastYes], ['notInterested', lastNo], ['unsubscribe', lastNo]]) {
+      for (const l of data[key]) if (!(seen.get(l.leadId) >= l.repliedAt)) seen.set(l.leadId, l.repliedAt);
+    }
+    return {
+      interested: [...lastYes].filter(([lead, at]) => !(lastNo.get(lead) > at)).length,
+      overdue: tabs.reply.filter((l) => daysSince(l.repliedAt) >= OVERDUE_DAYS).length,
+    };
+  }, [data, tabs]);
   const rate = data.repliedLeads ? `${Math.round((interested / data.repliedLeads) * 100)}%` : '—';
-  const overdue = tabs.reply.filter((l) => daysSince(l.repliedAt) >= OVERDUE_DAYS).length;
   return (
     <StatCards
       items={[
@@ -51,9 +55,9 @@ function PositiveStatCards({ section, tabs }) {
       ]}
     />
   );
-}
+});
 
-function TabChips({ tabs, ready, tab, onSelect }) {
+const TabChips = memo(function TabChips({ tabs, ready, tab, onSelect }) {
   return (
     <div className="chip-group" role="tablist" aria-label="What to do">
       {TABS.map((t) => {
@@ -67,18 +71,18 @@ function TabChips({ tabs, ready, tab, onSelect }) {
       })}
     </div>
   );
-}
+});
 
 // Why they are in this tab, in plain words; the score and matched phrases are in the tooltip and the drawer.
-function Why({ lead }) {
-  const why = whyOf(lead);
+const Why = memo(function Why({ lead }) {
+  const why = useMemo(() => whyOf(lead), [lead]);
   return (
     <>
       <Badge text={why.text} tone={why.tone} title={why.title} />
       {lead.labelledByPerson && <div className="muted small">Labelled by a person</div>}
     </>
   );
-}
+});
 
 // How long they have waited for our answer, or what happened instead.
 function Waiting({ lead, tab }) {
@@ -100,7 +104,7 @@ const SORT_OPTIONS = [
   { value: 'name', label: 'Name A–Z' },
 ];
 
-function SearchAndSort({ view, setView }) {
+const SearchAndSort = memo(function SearchAndSort({ view, setView }) {
   return (
     <>
       <input
@@ -121,7 +125,7 @@ function SearchAndSort({ view, setView }) {
       </select>
     </>
   );
-}
+});
 
 // What the last Gmail check found (shown as the "Last checked" tooltip).
 function checkText(r) {
@@ -160,26 +164,30 @@ function useInboxCheck(onDone) {
     lastAutoCheck = Date.now();
     run();
   }, [run]);
-  // "2 min ago" moves on by itself.
+  return useMemo(() => ({ ...state, run }), [state, run]);
+}
+
+// "2 min ago" moves on by itself; only this label re-renders for it, not the page.
+function LastChecked({ last }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 30_000);
     return () => clearInterval(t);
   }, []);
-  return { ...state, run };
+  return <span className="muted small" title={checkText(last.result)}>Last checked {ago(last.at)}</span>;
 }
 
-function InboxCheck({ check }) {
+const InboxCheck = memo(function InboxCheck({ check }) {
   const { busy, last, run } = check;
   return (
     <div className="inbox-status">
-      {last && <span className="muted small" title={checkText(last.result)}>Last checked {ago(last.at)}</span>}
+      {last && <LastChecked last={last} />}
       <button className="btn small-btn" type="button" onClick={run} disabled={busy}>
         <Icon name="mail" /> {busy ? 'Checking Gmail…' : 'Check inbox'}
       </button>
     </div>
   );
-}
+});
 
 // Only what needs saying: a failed check, or mail left for the next check.
 function InboxNote({ check }) {
@@ -189,13 +197,33 @@ function InboxNote({ check }) {
   return null;
 }
 
+const LeadRow = memo(function LeadRow({ l, tab }) {
+  return (
+    <OpenRow kind="personLead" id={l.id}>
+      <td className="lead-cell">
+        <div className="name">{l.name}</div>
+        <div className="muted small">{l.company}</div>
+        {l.earlier.length > 0 && (
+          <div className="muted small">+{l.earlier.length} earlier repl{l.earlier.length === 1 ? 'y' : 'ies'}</div>
+        )}
+      </td>
+      <td className="reply-cell">
+        {l.preview ? <div className="reply-preview">“{l.preview}”</div> : <span className="muted">—</span>}
+      </td>
+      <td><Why lead={l} /></td>
+      <td><Waiting lead={l} tab={tab} /></td>
+      <td className="view"><Icon name="chevR" /></td>
+    </OpenRow>
+  );
+});
+
 export default function PositiveLeadsView() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
   const section = useSection('positive');
   const { status, data, reload } = section;
-  const { positiveView, setPositiveView } = useLeadsFilter();
+  const { positiveView, setPositiveView } = usePositiveView();
   const check = useInboxCheck(reload);
   const tabs = useMemo(() => byPerson(data), [data]);
 
@@ -204,13 +232,22 @@ export default function PositiveLeadsView() {
   useEffect(() => {
     if (positiveView.tab !== tab.key) setPositiveView((v) => ({ ...v, tab: tab.key }));
   }, [tab.key, positiveView.tab, setPositiveView]);
-  const select = (t) => {
+  const select = useCallback((t) => {
     const query = t.key === TABS[0].key ? '' : `?tab=${t.key}`;
     router.replace(`${pathname}${query}`, { scroll: false });
-  };
+  }, [router, pathname]);
   const all = tabs[tab.key];
-  const list = visiblePositive(all, positiveView);
-  const searching = positiveView.q.trim() !== '';
+  // Typing stays instant: the input updates at once, the (long) list catches up when the browser is free.
+  const deferredView = useDeferredValue(positiveView);
+  const list = useMemo(() => visiblePositive(all, deferredView), [all, deferredView]);
+  const searching = deferredView.q.trim() !== '';
+  // Only a window of rows is in the DOM; the table scrolls inside a short box anyway.
+  const [shown, setShown] = useState(ROWS_STEP);
+  useEffect(() => { setShown(ROWS_STEP); }, [tab.key, positiveView.q]);
+  const rows = useMemo(
+    () => list.slice(0, shown).map((l) => <LeadRow key={l.id} l={l} tab={tab.key} />),
+    [list, shown, tab.key],
+  );
 
   return (
     <main className="page">
@@ -221,7 +258,7 @@ export default function PositiveLeadsView() {
         </div>
         <InboxCheck check={check} />
       </div>
-      <PositiveStatCards section={section} tabs={tabs} />
+      <PositiveStatCards status={status} data={data} reload={reload} tabs={tabs} />
       <div className="card">
         <div className="filters">
           <TabChips tabs={tabs} ready={status === 'ready'} tab={tab} onSelect={select} />
@@ -243,24 +280,13 @@ export default function PositiveLeadsView() {
               <th className="view" aria-label="Open" />
             </>
           )}
-          rows={list.map((l) => (
-            <OpenRow key={l.id} kind="personLead" id={l.id}>
-              <td className="lead-cell">
-                <div className="name">{l.name}</div>
-                <div className="muted small">{l.company}</div>
-                {l.earlier.length > 0 && (
-                  <div className="muted small">+{l.earlier.length} earlier repl{l.earlier.length === 1 ? 'y' : 'ies'}</div>
-                )}
-              </td>
-              <td className="reply-cell">
-                {l.preview ? <div className="reply-preview">“{l.preview}”</div> : <span className="muted">—</span>}
-              </td>
-              <td><Why lead={l} /></td>
-              <td><Waiting lead={l} tab={tab.key} /></td>
-              <td className="view"><Icon name="chevR" /></td>
-            </OpenRow>
-          ))}
+          rows={rows}
         />
+        {list.length > shown && (
+          <button className="btn" type="button" onClick={() => setShown((n) => n + ROWS_STEP)}>
+            Show more ({list.length - shown} left)
+          </button>
+        )}
       </div>
     </main>
   );

@@ -1,9 +1,18 @@
 // All authentication lives here, backed by Supabase Auth. Nothing else in the app should know how auth works.
 import { supabase } from './supabase';
 
+// The latest session is kept in memory (the listener fires on sign-in, sign-out and every token refresh), so a
+// request does not wait on supabase-js's storage lock before it is sent.
+let cached; // undefined until first known
+if (typeof window !== 'undefined') {
+  supabase.auth.onAuthStateChange((_event, session) => { cached = session; });
+}
+
 export async function getSession() {
+  if (cached !== undefined) return cached;
   const { data } = await supabase.auth.getSession();
-  return data.session;
+  cached = data.session;
+  return cached;
 }
 
 // Roles live in app_metadata, which only the server can write.

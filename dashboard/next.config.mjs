@@ -1,5 +1,5 @@
 // Security headers on every page and API route.
-// The CSP lists where the page may load from or send to: this site, Supabase, the dashboard backend and Google Fonts.
+// The CSP lists where the page may load from or send to: this site, Supabase, and the dashboard backend.
 // A script injected into the page then can't load code from elsewhere or send the login token to another server.
 // 'unsafe-inline' scripts are needed by Next.js's own inline scripts and the theme script in app/layout.js.
 import nextEnv from '@next/env';
@@ -18,8 +18,8 @@ const backend = origin(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000
 const csp = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`, // dev: React's dev tools and hot reload use eval
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
   "img-src 'self' data: blob:",
   ['connect-src', "'self'", supabase, supabase?.replace(/^http/, 'ws'), backend, isDev && 'ws:'].filter(Boolean).join(' '),
   "frame-ancestors 'none'",

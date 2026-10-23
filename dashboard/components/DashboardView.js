@@ -1,7 +1,7 @@
 'use client';
 // Page 1: a greeting; the Lead Pipeline and Recent Leads on the left;
 // Agent Control and Leads by Source on the right. Everything shown comes from /api/ca, /leads/stats and /leads.
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { OpenRow } from './OpenRow';
 import { useList, useSection } from './DataProvider';
@@ -110,9 +110,39 @@ function Pipeline({ stats }) {
 const LOGO_TONES = ['blue', 'green', 'red', 'amber', 'lavender', 'slate'];
 const logoTone = (name = '') => LOGO_TONES[[...name].reduce((h, c) => h + c.charCodeAt(0), 0) % LOGO_TONES.length];
 
+const LeadRow = memo(function LeadRow({ l }) {
+  const company = l.company || 'Unknown company';
+  return (
+    <OpenRow key={l.id} kind="lead" id={l.id}>
+                <td>
+                  <div className="co">
+                    <span className={`co-logo ${logoTone(company)}`} aria-hidden="true">{company[0].toUpperCase()}</span>
+                    <span className="co-text">
+                      <span className="name">{company}</span>
+                      <span className="co-email muted small">{l.email || '—'}</span>
+                    </span>
+                  </div>
+                </td>
+                <td className="muted email" title={l.email || undefined}>{l.email || '—'}</td>
+                <td><span className="pill">{sourceLabel(l.source)}</span></td>
+                <td><StatusBadge text={l.status} /></td>
+                <td className="muted nowrap" title={fmtDate(l.addedAt)}>{fmtDate(l.addedAt, 'date')}</td>
+                <td className="actions">
+                  {l.email && (
+                    <a className="row-icon" href={`mailto:${l.email}`} aria-label={`Email ${company}`} onClick={(e) => e.stopPropagation()}>
+                      <Icon name="mail" />
+                    </a>
+                  )}
+                  <span className="row-icon" aria-label="View"><Icon name="eye" /></span>
+                </td>
+              </OpenRow>
+  );
+});
+
 function RecentLeads() {
   const leads = useList('leads');
   const { status, data, reload, fetching } = leads;
+  const rows = useMemo(() => data.items.map((l) => <LeadRow key={l.id} l={l} />), [data.items]);
   return (
     <section className="card leads-card">
       <h2 className="panel-title"><Icon name="stack" /> Recent Leads</h2>
@@ -121,34 +151,7 @@ function RecentLeads() {
         head={<><th>Company</th><th className="email">Email</th><th>Source</th><th>Status</th><th>Date Added</th><th className="actions">Actions</th></>}
         busy={fetching}
         scrollKey={data.page}
-        rows={data.items.map((l) => {
-          const company = l.company || 'Unknown company';
-          return (
-            <OpenRow key={l.id} kind="lead" id={l.id}>
-              <td>
-                <div className="co">
-                  <span className={`co-logo ${logoTone(company)}`} aria-hidden="true">{company[0].toUpperCase()}</span>
-                  <span className="co-text">
-                    <span className="name">{company}</span>
-                    <span className="co-email muted small">{l.email || '—'}</span>
-                  </span>
-                </div>
-              </td>
-              <td className="muted email" title={l.email || undefined}>{l.email || '—'}</td>
-              <td><span className="pill">{sourceLabel(l.source)}</span></td>
-              <td><StatusBadge text={l.status} /></td>
-              <td className="muted nowrap" title={fmtDate(l.addedAt)}>{fmtDate(l.addedAt, 'date')}</td>
-              <td className="actions">
-                {l.email && (
-                  <a className="row-icon" href={`mailto:${l.email}`} aria-label={`Email ${company}`} onClick={(e) => e.stopPropagation()}>
-                    <Icon name="mail" />
-                  </a>
-                )}
-                <span className="row-icon" aria-label="View"><Icon name="eye" /></span>
-              </td>
-            </OpenRow>
-          );
-        })}
+        rows={rows}
         emptyIcon="users"
         emptyText="No leads yet"
         what="leads"
