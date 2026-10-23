@@ -1,7 +1,7 @@
 'use client';
 // Page 3: Blogs. Weekly Blog Files (the week's JSON, stored as is in Supabase Storage: which blog goes out on which day,
 // its approval and its post to Dev.to) on top, and the Blog Tracker (blogs written so far) below.
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { OpenRow } from './OpenRow';
 import { useList } from './DataProvider';
 import { Badge, CardHead, StatusBadge, SiteCell, ViewCell, DataTable, Pager, Skeleton, ErrorBox, EmptyBox, MetaRow, ExtLink } from './ui';
@@ -626,12 +626,22 @@ function WeeklyFilesCard({ admin, onTrackerChange }) {
 
 // ---------- Page ----------
 
+const BlogRow = memo(function BlogRow({ b }) {
+  return (
+    <OpenRow kind="blog" id={b.id}>
+      <td className="num">{pad(b.number)}</td><td className="name"><div className="ellip wide">{b.title}</div></td>
+      <td><StatusBadge text={b.status} /></td><td><SiteCell site={b.site} /></td><ViewCell />
+    </OpenRow>
+  );
+});
+
 export default function BlogsView() {
   const admin = useIsAdmin();
   const list = useList('blogs');
   const { status, data, reload, fetching } = list;
   const ready = status === 'ready';
   const posted = data.posted ?? 0; // across all posts, not just this page
+  const rows = useMemo(() => data.items.map((b) => <BlogRow key={b.id} b={b} />), [data.items]);
   return (
     <main className="page">
       <div className="page-head"><h1 className="page-title">Blogs</h1><p className="muted">Which blog goes out on which day, from the weekly blog files, and every blog written so far.</p></div>
@@ -654,12 +664,7 @@ export default function BlogsView() {
             status={status} emptyIcon="doc" emptyText="No blogs yet" what="blogs" onRetry={reload}
             head={<><th>#</th><th>Blog Topic/Title</th><th>Status</th><th>Posted On</th><th className="view">View</th></>}
             busy={fetching} scrollKey={data.page}
-            rows={data.items.map((b) => (
-              <OpenRow key={b.id} kind="blog" id={b.id}>
-                <td className="num">{pad(b.number)}</td><td className="name"><div className="ellip wide">{b.title}</div></td>
-                <td><StatusBadge text={b.status} /></td><td><SiteCell site={b.site} /></td><ViewCell />
-              </OpenRow>
-            ))}
+            rows={rows}
           />
           <Pager list={list} />
         </div>

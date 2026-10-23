@@ -1,3 +1,4 @@
+import { memo } from 'react';
 // Inline SVG icons. `body` is static, trusted markup; stroke icons share one set of SVG attributes.
 const stroke = (body, w = 20) => ({ stroke: true, body, w });
 const logo = (body, w = 18) => ({ stroke: false, body, w });
@@ -50,11 +51,11 @@ ICONS.LinkedIn = ICONS.linkedin; // blog site name from the backend
 
 // Unknown names render nothing, so unexpected data (e.g. a new blog site) can't crash a page.
 
-export function Icon({ name }) {
+export const Icon = memo(function Icon({ name }) {
   const i = ICONS[name];
   if (!i) return null;
   const props = { width: i.w, height: i.w, viewBox: '0 0 24 24', 'aria-hidden': true, dangerouslySetInnerHTML: { __html: i.body } };
   return i.stroke
     ? <svg {...props} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     : <svg {...props} />;
-}
+});

@@ -1,12 +1,12 @@
 // Small presentational pieces shared by every page and the drawer.
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { sourceLabel, toneOf } from '@/core/format';
 
-export const Badge = ({ text, tone, title }) => <span className={`badge ${tone}`} title={title}>{text}</span>;
-export const StatusBadge = ({ text }) => <Badge text={text} tone={toneOf(text)} />;
+export const Badge = memo(function Badge({ text, tone, title }) { return <span className={`badge ${tone}`} title={title}>{text}</span>; });
+export const StatusBadge = memo(function StatusBadge({ text }) { return <Badge text={text} tone={toneOf(text)} />; });
 
-export const SourceCell = ({ source }) => <span className="src">{sourceLabel(source)}</span>;
+export const SourceCell = memo(function SourceCell({ source }) { return <span className="src">{sourceLabel(source)}</span>; });
 
 export const SiteCell = ({ site }) => (
   site ? <span className="src"><Icon name={site} />{site}</span> : <span className="muted">—</span>
@@ -64,7 +64,7 @@ export const ExtLink = ({ href, children }) => (
 );
 
 // Row of stat cards. Each item: { label, icon, tone, value, status, onRetry }.
-export function StatCards({ items }) {
+export const StatCards = memo(function StatCards({ items }) {
   return (
     <div className="grid3">
       {items.map(({ label, icon, tone = '', value, sub, status, onRetry }) => (
@@ -81,11 +81,11 @@ export function StatCards({ items }) {
       ))}
     </div>
   );
-}
+});
 
 // Table for a loadable section: skeleton / error / empty / table. `busy` dims it while another page loads;
 // a new `scrollKey` (e.g. the page number) starts the table scrolled to the top.
-export function DataTable({ status, head, rows, emptyIcon, emptyText, what, onRetry, busy, scrollKey }) {
+export const DataTable = memo(function DataTable({ status, head, rows, emptyIcon, emptyText, what, onRetry, busy, scrollKey }) {
   if (status === 'loading') return <Skeleton />;
   if (status === 'error') return <ErrorBox what={what} onRetry={onRetry} />;
   if (!rows.length) return <EmptyBox icon={emptyIcon}>{emptyText}</EmptyBox>;
@@ -97,10 +97,10 @@ export function DataTable({ status, head, rows, emptyIcon, emptyText, what, onRe
       </table>
     </div>
   );
-}
+});
 
 // Previous / Next under a paged table: "51–100 of 248". Hidden when everything fits on one page.
-export function Pager({ list }) {
+export const Pager = memo(function Pager({ list }) {
   const { data, fetching, setPage, status } = list;
   const { total, page, limit } = data;
   if (status !== 'ready' || total <= limit) return null;
@@ -121,4 +121,4 @@ export function Pager({ list }) {
       </div>
     </nav>
   );
-}
+});

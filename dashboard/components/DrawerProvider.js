@@ -8,17 +8,30 @@ import { Icon } from './Icon';
 import { Skeleton, ErrorBox } from './ui';
 import { FormattedContent } from './FormattedContent';
 import { Markdown } from './LazyMarkdown';
-import { toSection, useLeadsFilter, useList, useSection } from './DataProvider';
+import { toSection, useLeadsFilter, useList, usePositiveView, useSection } from './DataProvider';
 import { getKinds } from './drawerKinds';
 import { neighbours } from '@/core/listStep';
 
 const DrawerCtx = createContext(null);
+
+// Which item is open ('kind:id' or null), outside React state so a row can subscribe to just its own answer.
+function createSelection() {
+  let current = null;
+  const subs = new Set();
+  return {
+    get: () => current,
+    set(next) { if (next !== current) { current = next; subs.forEach((f) => f()); } },
+    subscribe(f) { subs.add(f); return () => subs.delete(f); },
+  };
+}
 export const useDrawer = () => useContext(DrawerCtx);
 
 export function DrawerProvider({ children }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { filter, positiveView } = useLeadsFilter();
+  const { filter } = useLeadsFilter();
+  const { positiveView } = usePositiveView();
+  const selection = useMemo(createSelection, []);
   const [s, setS] = useState({ open: false, kind: null, id: null });
 
   const rootRef = useRef(null);
@@ -66,11 +79,15 @@ export function DrawerProvider({ children }) {
   const section = useSection(k?.section ?? null);
   const paged = useList(k?.paged ?? null);
 
-  const items = !k ? [] : k.paged ? paged.data.items : k.list(section.data, filter, positiveView);
+  // Not worked out while the drawer is closed (e.g. on every Positive Leads keystroke).
+  const items = useMemo(
+    () => (!s.open || !k ? [] : k.paged ? paged.data.items : k.list(section.data, filter, positiveView)),
+    [s.open, k, paged.data.items, section.data, filter, positiveView],
+  );
   // If the open item leaves the list (e.g. relabelled), Previous/Next carry on from where it was (core/listStep.js).
   const { index, prev: prevItem, next: nextItem } = neighbours(items, s.id, lastIndex.current);
   useEffect(() => { if (index >= 0) lastIndex.current = index; }, [index]);
-  const step = (item) => { if (item) open(s.kind, item.id); };
+  const step = useCallback((item) => { if (item) open(s.kind, item.id); }, [open, s.kind]);
 
   useEffect(() => {
     if (!s.open) return undefined;
@@ -100,12 +117,10 @@ export function DrawerProvider({ children }) {
 
   useEffect(() => { bodyRef.current?.scrollTo(0, 0); }, [detail.status, s.id]);
 
-  const ctx = useMemo(() => ({
-    open, close, goto,
-    isSelected: (kind, id) => s.open && s.kind === kind && s.id === id,
-  }), [open, close, goto, s.open, s.kind, s.id]);
+  useEffect(() => { selection.set(s.open ? `${s.kind}:${s.id}` : null); }, [selection, s.open, s.kind, s.id]);
+  const ctx = useMemo(() => ({ open, close, goto, selection }), [open, close, goto, selection]);
 
-  const v = k && detail.status === 'ready' ? k.describe(detail.data) : null;
+  const v = useMemo(() => (k && detail.status === 'ready' ? k.describe(detail.data) : null), [k, detail.status, detail.data]);
 
   return (
     <DrawerCtx.Provider value={ctx}>

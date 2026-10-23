@@ -17,9 +17,9 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
 button { font: inherit; color: inherit; cursor: pointer; }
-.page { max-width: 1200px; margin: 0 auto; padding: 32px 24px 80px; display: flex; flex-direction: column; gap: 44px; animation: fade .5s ease both; }
+.page { max-width: 1200px; margin: 0 auto; padding: 32px 24px 80px; display: flex; flex-direction: column; gap: 44px; animation: fade .12s ease-out both; }
 .page > section { min-width: 0; }
-@keyframes fade { from { opacity: 0; transform: translateY(6px); } }
+@keyframes fade { from { transform: translateY(4px); } }
 
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
 .page-title, .section-title { margin: 0; font-weight: 800; letter-spacing: -.02em; }
