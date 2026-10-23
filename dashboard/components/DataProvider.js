@@ -33,12 +33,29 @@ const LIST_FILTERS = { sent: { q: '', status: 'all' } };
 // Agent status: poll every 3 s while a pause/resume is being applied, otherwise every 5 s (dashboard-integration
 // section 3.5: an offline assistant shows within seconds, never as an endless spinner).
 const OPTIONS = {
+  positive: { staleTime: 60_000 }, // the biggest payload: do not refetch it on every window focus
   agent: { refetchInterval: (q) => (q.state.data && !q.state.data.inSync ? 3000 : 5000) },
 };
 const EMPTY = {
   agent: null, stats: null,
   positive: { positive: [], review: [], questions: [], notInterested: [], unsubscribe: [], repliedLeads: 0 },
   needsContact: { items: [], total: 0 },
+};
+
+// Warm the cache when the pointer or focus reaches a sidebar link, so the page opens with data instead of a skeleton.
+// prefetchQuery does nothing while the cached data is still fresh.
+export const ROUTE_PREFETCH = {
+  '/dashboard': (qc) => {
+    qc.prefetchQuery({ queryKey: ['section', 'stats'], queryFn: FETCHERS.stats });
+    const f = { status: 'all', source: 'all' };
+    qc.prefetchQuery({ queryKey: ['list', 'leads', 1, f], queryFn: () => LISTS.leads(1, f) });
+  },
+  '/positive-leads': (qc) => qc.prefetchQuery({ queryKey: ['section', 'positive'], queryFn: FETCHERS.positive }),
+  '/needs-contact': (qc) => qc.prefetchQuery({ queryKey: ['section', 'needsContact'], queryFn: FETCHERS.needsContact }),
+  '/history': (qc) => {
+    const f = LIST_FILTERS.sent;
+    qc.prefetchQuery({ queryKey: ['list', 'sent', 1, f], queryFn: () => LISTS.sent(1, f) });
+  },
 };
 
 // Positive Leads search + sort ({ q, sort, tab }), applied to one tab. 'followup' keeps the tab's own order

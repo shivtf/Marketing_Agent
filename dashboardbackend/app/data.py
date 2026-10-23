@@ -153,7 +153,7 @@ async def _pg() -> asyncpg.Pool:
                 if not dsn:
                     raise HTTPException(503, "DATABASE_URL is not set on the dashboard backend")
                 # statement_cache_size=0: required behind pgbouncer / the Supabase transaction pooler.
-                _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5, statement_cache_size=0)
+                _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=8, statement_cache_size=0, command_timeout=30)
     return _pool
 
 

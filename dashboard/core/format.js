@@ -21,12 +21,14 @@ export const scoreHitsText = (hits) => hits
 // A time with no zone ("2026-10-07T05:12:38") is UTC like every time the backend sends; without the "Z" the
 // browser would read it as local time.
 const HAS_ZONE = /(Z|[+-]\d{2}:?\d{2})$/i;
+const DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const TIME = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
 export function fmtDate(iso, mode = 'full') {
   if (!iso) return '—';
   const d = new Date(typeof iso === 'string' && iso.includes('T') && !HAS_ZONE.test(iso) ? `${iso}Z` : iso);
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const date = DATE.format(d);
   if (mode === 'date') return date;
-  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const time = TIME.format(d);
   return mode === 'table' ? `${date} ${time}` : `${date}, ${time}`;
 }
 

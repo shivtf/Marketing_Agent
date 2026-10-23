@@ -3,7 +3,7 @@
 // to switch page first); what each kind shows lives in drawerKinds.js.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { Skeleton, ErrorBox } from './ui';
 import { FormattedContent } from './FormattedContent';
@@ -70,6 +70,7 @@ export function DrawerProvider({ children }) {
   const k = s.kind ? kinds[s.kind] : null;
 
   // The item's detail (cached per item, so stepping back is instant) and the list behind Previous/Next.
+  const qc = useQueryClient();
   const detailQuery = useQuery({
     queryKey: ['detail', s.kind, s.id],
     queryFn: () => k.load(s.id),
@@ -118,7 +119,12 @@ export function DrawerProvider({ children }) {
   useEffect(() => { bodyRef.current?.scrollTo(0, 0); }, [detail.status, s.id]);
 
   useEffect(() => { selection.set(s.open ? `${s.kind}:${s.id}` : null); }, [selection, s.open, s.kind, s.id]);
-  const ctx = useMemo(() => ({ open, close, goto, selection }), [open, close, goto, selection]);
+  // Load an item's detail while the pointer is on its row, so the drawer opens with data.
+  const prefetch = useCallback((kind, id) => {
+    const kd = kinds[kind];
+    if (kd) qc.prefetchQuery({ queryKey: ['detail', kind, id], queryFn: () => kd.load(id), staleTime: 30_000 });
+  }, [qc, kinds]);
+  const ctx = useMemo(() => ({ open, close, goto, selection, prefetch }), [open, close, goto, selection, prefetch]);
 
   const v = useMemo(() => (k && detail.status === 'ready' ? k.describe(detail.data) : null), [k, detail.status, detail.data]);
 
