@@ -12,7 +12,7 @@ import { getSession, isAdmin } from '@/core/auth';
 import { pad, fmtDay, fmtDate } from '@/core/format';
 import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, decideBlogs, removeBlog, weekLabel } from '@/core/blogFiles';
 import { postTodaysBlogs, postBlogAgain, getPostingMode } from '@/core/api';
-import { readBlogs, checkUpload, findBlog, headline, blogToday, addDays, thisMonday, LATE_DAYS } from '@/core/weeklyBlogs';
+import { readBlogs, checkUpload, findBlog, headline, blogToday, thisMonday, LATE_DAYS, lastPostDay } from '@/core/weeklyBlogs';
 
 const StatBox = ({ label, value, color }) => (
   <div className="stat-box">
@@ -48,7 +48,10 @@ function ApprovalBadge({ approval: a, date, posted }) {
   }
   if (a.status === 'approved') return <Badge text="Approved" tone="green" title={`Approved by ${a.by}, ${fmtDate(a.at)}`} />;
   if (a.status === 'rejected') return <Badge text="Rejected" tone="red" title={a.reason} />;
-  if (date && date < todayYmd()) return <Badge text="Not approved" tone="gray" title="Its date has passed: it won't be posted." />;
+  if (date && date < todayYmd()) {
+    const late = lastPostDay(date) >= todayYmd();
+    return <Badge text="Not approved" tone="gray" title={late ? `Its day has passed, but it can still be approved and posted for ${LATE_DAYS} days: open it.` : "Its date has passed: it won't be posted."} />;
+  }
   return (
     <Badge
       text="Waiting" tone="amber"
@@ -101,7 +104,7 @@ function PostPanel({ admin, name, blog, post, approval, onDone }) {
       setBusy(false);
     }
   }
-  const lastDay = date ? addDays(date, LATE_DAYS) : '';
+  const lastDay = date ? lastPostDay(date) : '';
   const inTime = !!date && date <= today && today <= lastDay;
   let text;
   if (missed) {
@@ -147,6 +150,8 @@ function ApprovalPanel({ admin, name, blog, entry, problem, onDone }) {
   }
   const a = entry.approval || { status: 'waiting' };
   const past = !!blog.publishDate && blog.publishDate < todayYmd();
+  // Up to LATE_DAYS after its date it can still be approved, then posted with Post now (the server allows the same).
+  const tooLate = past && lastPostDay(blog.publishDate) < todayYmd();
   // Posted or being posted for real: the decision can't change any more (the server refuses it too).
   const locked = isPosted(entry.post);
   const empty = !blog.content.trim(); // can't be posted, so can't be approved (the server refuses it too)
@@ -176,8 +181,11 @@ function ApprovalPanel({ admin, name, blog, entry, problem, onDone }) {
         : <>Approved by {a.by}, {fmtDate(a.at)}. This version goes to Dev.to when an admin clicks Post today&apos;s blogs on {fmtDay(blog.publishDate, 'long')}: nothing posts it on its own.</>;
   } else if (a.status === 'rejected') {
     text = <>Rejected by {a.by}, {fmtDate(a.at)}: <i>{a.reason}</i> It won&apos;t be posted.</>;
-  } else if (past) {
+  } else if (tooLate) {
     text = <>Not approved, and its date has passed: it won&apos;t be posted.</>;
+  } else if (past) {
+    text = <>Not approved, and its day ({fmtDay(blog.publishDate, 'long')}) has passed. It can still be approved until
+      {' '}{fmtDay(lastPostDay(blog.publishDate), 'long')}: approve it, then click Post now.</>;
   } else {
     text = <>Waiting for approval: it won&apos;t be posted until an admin approves it.
       {a.earlier && ` It was ${a.earlier.status} before, but the file was replaced and this blog changed.`}</>;
@@ -186,10 +194,10 @@ function ApprovalPanel({ admin, name, blog, entry, problem, onDone }) {
     <div className="approval-box">
       <div className="approval-head"><b>Approval</b><ApprovalBadge approval={a} date={blog.publishDate} posted={locked} /></div>
       <p className="small">{text}</p>
-      {admin && empty && a.status !== 'approved' && !past && <p className="small muted">It has no content, so it can&apos;t be approved: fix the file and upload it again.</p>}
+      {admin && empty && a.status !== 'approved' && !tooLate && <p className="small muted">It has no content, so it can&apos;t be approved: fix the file and upload it again.</p>}
       {admin && !rejecting && !locked && (
         <div className="row approval-actions">
-          {a.status !== 'approved' && !past && !empty && (
+          {a.status !== 'approved' && !tooLate && !empty && (
             <button className="btn primary small-btn" type="button" disabled={busy} onClick={() => send('approved')}>
               <Icon name="check" /> Approve
             </button>
