@@ -8,12 +8,12 @@ the approval again, so a blog taken back is skipped and a second click, or anoth
 Nothing is retried on its own: a failed blog waits for an admin's "Post again" (POST /blog-posts/post-again). Dev.to
 may have posted it even though no answer came back, so a blog tried before is first looked for on Dev.to (same title)
 and only recorded when it is already there. The same call posts an approved blog nobody posted on its
-day. Both up to LATE_DAYS after the blog's date.
+day. Both until the Saturday of the blog's week (Monday to Saturday), as the next week's file comes on Sunday.
 
   GET  /blog-posts/mode                             -> { mode: off | draft | live } (any signed-in user)
   POST /blog-posts/post-today                       -> { mode, day, posted, failed, skipped }
   POST /blog-posts/post-again { fileName, blogId }  -> the same, for that one blog: failed, stuck while 'posting', or
-                                                       missed (approved, never posted), dated today or LATE_DAYS before
+                                                       missed (approved, never posted), dated this week up to today
 
 Settings (Render): BLOG_POSTING = off (default: nothing is posted) | draft (Dev.to drafts, for testing) | live;
 DEVTO_API_KEY; BLOG_TIMEZONE (default Asia/Kolkata). Admins only. Errors are 503 / 502 / 422, never 401 / 409 (the
@@ -25,7 +25,7 @@ import json
 import logging
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -42,7 +42,6 @@ router = APIRouter(prefix="/blog-posts", dependencies=[Depends(current_user)])
 Admin = Annotated[dict, Depends(current_admin)]
 
 DEVTO_URL = "https://dev.to/api/articles"
-LATE_DAYS = 3  # how long after its date a failed or missed blog may still be posted (the dashboard's LATE_DAYS)
 MIGRATION = "Run migrations/010_blog_approval.sql and 011_blog_posts.sql in the Supabase SQL editor first."
 _lock = asyncio.Lock()  # one posting run at a time in this process; the blog_posts claim guards the rest
 
@@ -59,6 +58,12 @@ class PostError(Exception):
 def posting_mode() -> str:
     mode = os.environ.get("BLOG_POSTING", "").strip().lower()
     return mode if mode in ("draft", "live") else "off"
+
+
+def week_start(day: date) -> date:
+    """The earliest date of a blog that may still be posted late on `day`: the Monday of its week (Monday to Saturday).
+    On a Sunday, only that day's blogs: the week before has ended (the dashboard's lastPostDay says the same)."""
+    return day if day.isoweekday() == 7 else day - timedelta(days=day.isoweekday() - 1)
 
 
 def today() -> date:
@@ -268,17 +273,17 @@ async def post_today(admin: Admin) -> dict:
 
 @router.post("/post-again")
 async def post_again(body: PostAgainIn, admin: Admin) -> dict:
-    """Posts one approved blog whose posting failed, stopped half way, or never happened (missed), up to LATE_DAYS
-    after its date."""
+    """Posts one approved blog whose posting failed, stopped half way, or never happened (missed), until the Saturday
+    of its week."""
     by = admin.get("email") or admin["sub"]
 
     async def work():
         day = today()
         rows = await (await _pg()).fetch(
-            _APPROVED + " and publish_date between $1::date - $4::int and $1 and file_name = $2 and blog_id = $3",
-            day, body.fileName, body.blogId, LATE_DAYS)
+            _APPROVED + " and publish_date between $4 and $1 and file_name = $2 and blog_id = $3",
+            day, body.fileName, body.blogId, week_start(day))
         if not rows:
-            raise HTTPException(422, f"Only an approved blog dated today or up to {LATE_DAYS} days ago can be posted.")
+            raise HTTPException(422, "Only an approved blog from this week (Monday to Saturday), dated today or earlier, can be posted.")
         result = await _run(rows, day, by, again=True)
         if result["skipped"]:
             raise HTTPException(422, "This blog is already posted or being posted.")

@@ -177,13 +177,13 @@ def test_the_login_reads_approvals_but_cannot_write_them(env):
 
 def test_a_missed_blog_can_be_posted_late_but_not_too_late(env, devto):
     _approve(env, "f.json", "F1", day=date(2026, 10, 19))  # 2 days ago, nobody posted it
-    _approve(env, "f.json", "F2", day=date(2026, 10, 17))  # 4 days ago: too late
+    _approve(env, "f.json", "F2", day=date(2026, 10, 17))  # last week's Saturday: too late
     assert all(p["blogId"] not in ("F1", "F2") for p in _post(env).json()["posted"])  # not today's
     res = _post(env, "/blog-posts/post-again", json={"fileName": "f.json", "blogId": "F1"}).json()
     assert [p["blogId"] for p in res["posted"]] == ["F1"]
     assert _row(env, "f.json", "F1")["status"] == "posted"
     late = _post(env, "/blog-posts/post-again", json={"fileName": "f.json", "blogId": "F2"})
-    assert late.status_code == 422 and "3 days" in late.json()["detail"]
+    assert late.status_code == 422 and "this week" in late.json()["detail"]
     assert _row(env, "f.json", "F2") is None
 
 

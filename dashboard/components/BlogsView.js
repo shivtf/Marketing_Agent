@@ -12,7 +12,7 @@ import { getSession, isAdmin } from '@/core/auth';
 import { pad, fmtDay, fmtDate } from '@/core/format';
 import { listWeeklyFiles, getWeeklyFile, uploadWeeklyFile, decideBlogs, removeBlog, weekLabel } from '@/core/blogFiles';
 import { postTodaysBlogs, postBlogAgain, getPostingMode } from '@/core/api';
-import { readBlogs, checkUpload, findBlog, headline, blogToday, thisMonday, LATE_DAYS, lastPostDay } from '@/core/weeklyBlogs';
+import { readBlogs, checkUpload, findBlog, headline, blogToday, thisMonday, lastPostDay } from '@/core/weeklyBlogs';
 
 const StatBox = ({ label, value, color }) => (
   <div className="stat-box">
@@ -44,13 +44,13 @@ const isPosted = (post) => !!post && (post.status === 'posting' || (post.status 
 function ApprovalBadge({ approval: a, date, posted }) {
   if (!a) return <span className="muted">—</span>;
   if (a.status === 'approved' && !posted && date && date < todayYmd()) {
-    return <Badge text="Missed" tone="red" title={`Approved by ${a.by}, but nobody posted it on its day. It can still be posted for ${LATE_DAYS} days: open it.`} />;
+    return <Badge text="Missed" tone="red" title={`Approved by ${a.by}, but nobody posted it on its day. It can still be posted until the Saturday of its week: open it.`} />;
   }
   if (a.status === 'approved') return <Badge text="Approved" tone="green" title={`Approved by ${a.by}, ${fmtDate(a.at)}`} />;
   if (a.status === 'rejected') return <Badge text="Rejected" tone="red" title={a.reason} />;
   if (date && date < todayYmd()) {
     const late = lastPostDay(date) >= todayYmd();
-    return <Badge text="Not approved" tone="gray" title={late ? `Its day has passed, but it can still be approved and posted for ${LATE_DAYS} days: open it.` : "Its date has passed: it won't be posted."} />;
+    return <Badge text="Not approved" tone="gray" title={late ? 'Its day has passed, but it can still be approved and posted until the Saturday of its week: open it.' : "Its date has passed: it won't be posted."} />;
   }
   return (
     <Badge
@@ -83,7 +83,7 @@ const BlogStatus = ({ blog: b }) => (
 );
 
 // Posted, being posted, failed, or missed (approved, never posted, its day passed): what the viewer says about it, and
-// (admins) Post again / Post now, from the blog's date up to LATE_DAYS after it (the backend allows the same).
+// (admins) Post again / Post now, from the blog's date until the Saturday of its week (the backend allows the same).
 function PostPanel({ admin, name, blog, post, approval, onDone }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -150,7 +150,7 @@ function ApprovalPanel({ admin, name, blog, entry, problem, onDone }) {
   }
   const a = entry.approval || { status: 'waiting' };
   const past = !!blog.publishDate && blog.publishDate < todayYmd();
-  // Up to LATE_DAYS after its date it can still be approved, then posted with Post now (the server allows the same).
+  // Until the Saturday of its week it can still be approved, then posted with Post now (the server allows the same).
   const tooLate = past && lastPostDay(blog.publishDate) < todayYmd();
   // Posted or being posted for real: the decision can't change any more (the server refuses it too).
   const locked = isPosted(entry.post);

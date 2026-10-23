@@ -1,9 +1,16 @@
 import asyncio
+from datetime import date
 
 import asyncpg
 import httpx
 
 from app import blog_posts
+
+
+def test_a_late_blog_may_be_from_this_week_only():
+    assert blog_posts.week_start(date(2026, 10, 21)) == date(2026, 10, 19)  # Wednesday -> its Monday
+    assert blog_posts.week_start(date(2026, 10, 24)) == date(2026, 10, 19)  # Saturday
+    assert blog_posts.week_start(date(2026, 10, 25)) == date(2026, 10, 25)  # Sunday: last week has ended
 
 
 def test_tags_fit_devto():
