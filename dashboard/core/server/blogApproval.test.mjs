@@ -79,8 +79,8 @@ test('a blog changed since the admin looked at it is not decided (the file was r
   assert.deepEqual(out.upserts, []);
 });
 
-test('what cannot be approved: a past date, a bad date, a missing or repeated id, an unknown decision', () => {
-  const blogs = fileOf(blog('OLD', '2026-10-20'), blog('BAD', '26/10/2026'), blog('TWICE', '2026-10-26'),
+test('what cannot be approved: a date more than LATE_DAYS ago, a bad date, a missing or repeated id, an unknown decision', () => {
+  const blogs = fileOf(blog('OLD', '2026-10-17'), blog('BAD', '26/10/2026'), blog('TWICE', '2026-10-26'),
     blog('TWICE', '2026-10-27'), blog('OK', '2026-10-21'));
   const h = (id) => byId(blogs, id).hash;
   const out = decide(blogs, [
@@ -91,7 +91,7 @@ test('what cannot be approved: a past date, a bad date, a missing or repeated id
     { id: 'OK', status: 'maybe', hash: h('OK') },
   ]);
   assert.deepEqual(out.problems.map((p) => `${p.id}: ${p.message}`), [
-    'OLD: Its date (2026-10-20) has passed.',
+    'OLD: Its date (2026-10-17) is more than 3 days ago: it can\'t be posted any more.',
     'BAD: Its publish_date is not a real date: fix the file first.',
     'TWICE: This id is used more than once in the file: fix the file first.',
     'NOPE: This blog is not in the file.',
@@ -101,6 +101,18 @@ test('what cannot be approved: a past date, a bad date, a missing or repeated id
   assert.deepEqual(decide(blogs, [{ id: 'OK', status: 'approved', hash: h('OK') }]).problems, []);
   assert.deepEqual(decide(blogs, [{ id: 'OLD', status: 'rejected', reason: 'late', hash: h('OLD') }]).problems, []);
   assert.deepEqual(decide(blogs, []).problems, [{ id: '', message: 'No blogs to decide on.' }]);
+});
+
+test('a blog whose day passed can still be approved late, up to LATE_DAYS after its date', () => {
+  const blogs = fileOf(blog('YESTERDAY', '2026-10-20'), blog('LAST', '2026-10-18'));
+  const h = (id) => byId(blogs, id).hash;
+  const out = decide(blogs, [
+    { id: 'YESTERDAY', status: 'approved', hash: h('YESTERDAY') },
+    { id: 'LAST', status: 'approved', hash: h('LAST') }, // exactly LATE_DAYS ago: its last day
+  ]);
+  assert.deepEqual(out.problems, []);
+  assert.deepEqual(out.upserts.map((r) => [r.blog_id, r.status, r.publish_date]),
+    [['YESTERDAY', 'approved', '2026-10-20'], ['LAST', 'approved', '2026-10-18']]);
 });
 
 test('a blog posted or being posted can\'t be decided again; a failed one or a Dev.to draft can', () => {

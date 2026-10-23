@@ -61,6 +61,8 @@ export const blogToday = (now = new Date()) => dayIn.format(now); // 'YYYY-MM-DD
 // A blog whose posting failed, or that nobody posted on its day, can still be posted this many days after its date
 // (the backend's LATE_DAYS, app/blog_posts.py).
 export const LATE_DAYS = 3;
+// The last day a blog dated `ymd` can still be approved and posted.
+export const lastPostDay = (ymd) => addDays(ymd, LATE_DAYS);
 
 // Problems with a file uploaded for the week starting `monday` ('YYYY-MM-DD'). Errors stop the upload; warnings
 // don't. -> { errors: [{ id, message }], warnings: [{ id, message }] }
