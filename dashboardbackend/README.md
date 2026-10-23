@@ -13,7 +13,7 @@ Python (FastAPI) API for the dashboard. Sign-in, sign-out and password reset sta
 | `GET /emails/replies/{id}`                                 | Bearer | one reply read from Gmail, with the email it answers |
 | `GET /blogs`, `/blogs/{id}`                                | Bearer | blog posts and their publish status          |
 | `POST /inbox/check`, `POST /inbox/label`                 | Bearer | read new replies from the connected Gmail inbox (read only); a person's label for a reply, Unsubscribe also stops the mail agent emailing them (`app/inbox.py`) |
-| `POST /blog-posts/post-today`, `POST /blog-posts/post-again` | Admin | post today's approved blogs to Dev.to; post a failed or missed one, up to 3 days late (`app/blog_posts.py`) |
+| `POST /blog-posts/post-today`, `POST /blog-posts/post-again` | Admin | post today's approved blogs to Dev.to; post a failed or missed one until the Saturday of its week (`app/blog_posts.py`) |
 
 Protect a new route with `user: dict = Depends(current_user)` (`app/auth.py`).
 
@@ -122,7 +122,7 @@ blog tried before is first looked for on Dev.to (same title, our latest 100 post
 there; the same happens for a blog left `posting` for 15 minutes (the server stopped, or the database refused to record
 it after Dev.to took it). There
 is no scheduled run yet: posting happens only on that click. A blog nobody posted on its day shows as **Missed**;
-"Post now" (the same `post-again` call) can still post it, like a failed one, up to 3 days after its date (`LATE_DAYS`).
+"Post now" (the same `post-again` call) can still post it, like a failed one, until the Saturday of its week (`week_start`): the next week's file comes on Sunday.
 "Today" is India time everywhere (`BLOG_TIMEZONE` here, and the dashboard's `BLOG_TIMEZONE` in core/weeklyBlogs.js). The Blog Tracker (`GET /blogs`) lists the Marketing
 Agent's old posts (`content_posts`) and these.
 

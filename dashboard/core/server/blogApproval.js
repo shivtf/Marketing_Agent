@@ -4,7 +4,7 @@
 // waits for a new decision, and the publishing backend posts the approved copy. No database or Storage here, only the
 // rules, so `node --test` can load it (core/server/blogApproval.test.mjs).
 import { createHash } from 'node:crypto';
-import { isDay, lastPostDay, LATE_DAYS, readBlogs } from '../weeklyBlogs.js';
+import { isDay, lastPostDay, readBlogs } from '../weeklyBlogs.js';
 
 // JSON with object keys sorted, so the same blog always gives the same text whatever order its keys were written in.
 const stable = (v) => {
@@ -42,8 +42,8 @@ export function staleApprovals(rows, blogs) {
 // An admin's decisions on blogs of one file -> { upserts: rows to write, clear: ids back to waiting, problems, changed }.
 // Each decision: { id, status: 'approved' | 'rejected' | 'waiting', reason?, hash }, `hash` being the version the admin
 // looked at. All or nothing: any problem means nothing is written. `changed`: the file was replaced meanwhile.
-// `today` is 'YYYY-MM-DD': a blog can be approved up to LATE_DAYS after its date (it is then posted with Post now),
-// not later. `locked`: ids of blogs posted or
+// `today` is 'YYYY-MM-DD': a blog can be approved until the Saturday of its week (after its day, it is then posted with
+// Post now), not later. `locked`: ids of blogs posted or
 // being posted (blog_posts, a Dev.to draft aside), whose decision can't change any more.
 export function planDecisions({ fileName, blogs, decisions, by, today, locked = new Set(), now = new Date() }) {
   const out = { upserts: [], clear: [], problems: [], changed: false };
@@ -72,7 +72,7 @@ export function planDecisions({ fileName, blogs, decisions, by, today, locked = 
     if (d.status === 'approved') {
       if (!isDay(blog.publishDate)) { problem(id, 'Its publish_date is not a real date: fix the file first.'); continue; }
       if (lastPostDay(blog.publishDate) < today) {
-        problem(id, `Its date (${blog.publishDate}) is more than ${LATE_DAYS} days ago: it can't be posted any more.`);
+        problem(id, `Its week ended on ${lastPostDay(blog.publishDate)}: it can't be posted any more.`);
         continue;
       }
       if (!blog.content.trim()) { problem(id, 'It has no content, so it can\'t be posted: fix the file first.'); continue; }

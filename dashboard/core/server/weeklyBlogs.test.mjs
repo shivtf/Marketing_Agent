@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { blogToday, checkUpload, findBlog, readBlogs, thisMonday, weekOf } from '../weeklyBlogs.js';
+import { blogToday, checkUpload, findBlog, lastPostDay, readBlogs, thisMonday, weekOf } from '../weeklyBlogs.js';
 
 const TODAY = new Date('2026-10-21T10:00:00Z'); // a Wednesday: this week starts Monday 2026-10-19
 const blog = (id, day, extra = {}) => ({ id, topic: `Topic ${id}`, publish_date: day, content: '# Hi', ...extra });
@@ -124,4 +124,11 @@ test('title and one reference_url are read too (the files the generator writes)'
   assert.equal(b.title, 'Real title');
   assert.deepEqual(b.referenceUrls, ['https://a.test']);
   assert.deepEqual(messages(checkUpload(file(blog('B1', '2026-10-26', { topic: '', title: 'T' })), TODAY)), []);
+});
+
+test('a missed blog can be posted until the Saturday of its week, a Sunday one only that day', () => {
+  assert.equal(lastPostDay('2026-10-19'), '2026-10-24'); // Monday
+  assert.equal(lastPostDay('2026-10-22'), '2026-10-24'); // Thursday
+  assert.equal(lastPostDay('2026-10-24'), '2026-10-24'); // Saturday
+  assert.equal(lastPostDay('2026-10-25'), '2026-10-25'); // Sunday
 });

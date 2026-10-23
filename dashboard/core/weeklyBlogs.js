@@ -58,11 +58,13 @@ export const BLOG_TIMEZONE = 'Asia/Kolkata';
 const dayIn = new Intl.DateTimeFormat('en-CA', { timeZone: BLOG_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' });
 export const blogToday = (now = new Date()) => dayIn.format(now); // 'YYYY-MM-DD'
 
-// A blog whose posting failed, or that nobody posted on its day, can still be posted this many days after its date
-// (the backend's LATE_DAYS, app/blog_posts.py).
-export const LATE_DAYS = 3;
-// The last day a blog dated `ymd` can still be approved and posted.
-export const lastPostDay = (ymd) => addDays(ymd, LATE_DAYS);
+// The last day a blog dated `ymd` can still be approved and posted, when its posting failed or nobody approved or posted
+// it on its day: the Saturday of its week (Monday to Saturday), as the next week's file comes on Sunday. A Sunday blog
+// gets no extra day. The backend's week_start (app/blog_posts.py) says the same.
+export const lastPostDay = (ymd) => {
+  const weekday = new Date(`${ymd}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  return weekday === 0 ? ymd : addDays(ymd, 6 - weekday);
+};
 
 // Problems with a file uploaded for the week starting `monday` ('YYYY-MM-DD'). Errors stop the upload; warnings
 // don't. -> { errors: [{ id, message }], warnings: [{ id, message }] }
